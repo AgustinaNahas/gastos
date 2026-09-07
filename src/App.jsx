@@ -7,6 +7,7 @@ import {
   buildStoredExpense,
   clearAllExpenses,
   deleteExpensesByIds,
+  deleteExpensesBySourceFile,
   putExpense
 } from "./db/expensesDb";
 import { hydrateUserCloud } from "./db/hydrateCloud";
@@ -24,7 +25,6 @@ import {
   chartExpenseCategoryKey,
   isExcludedFromSpendingPatternCharts,
   categorize,
-  categorizeMercadoNewExport,
   categorizeMercadoRow,
   loadCategories,
   normalizeCategory,
@@ -32,7 +32,8 @@ import {
   reclassifyExpenseRow,
   safeCategory,
   saveCategories,
-  sortCategoriesList
+  sortCategoriesList,
+  isMercadoInternalMovement
 } from "./utils/expenseCategories";
 import {
   CAT_PALETTE_COUNT,
@@ -44,12 +45,15 @@ import {
   saveCategoryColors
 } from "./utils/categoryVisual";
 import { buildPieSlices } from "./utils/chartPie";
+import { attachImportedSource, summarizeImportedSources } from "./utils/importedSources";
 import {
   inferCardBrand,
   parseCreditPdfGeneric,
   parseGaliciaDebitoPdf,
+  parseMercadoDebitoCsvNewExport,
   parseMoney,
-  parsePatagoniaDebito
+  parsePatagoniaDebito,
+  textLooksLikeMercadoNewExport
 } from "./parsers/statements";
 
 const STORAGE_KEY = "gastos_kb_v2";
@@ -94,6 +98,7 @@ function isInterAccountMovement(expense) {
     d.includes("transferencia enviada maria agustina,nahas") ||
     d.includes("su pago en pesos") ||
     d.includes("rescate fima")) return true;
+  if (isMercadoInternalMovement(expense)) return true;
   return false;
 }
 
@@ -273,76 +278,6 @@ function buildMercadoDescription(row) {
     parts.push(txn);
   }
   return parts.filter(Boolean).join(" · ");
-}
-
-/** Montos tipo -1.300,00 o 30.000,00 (miles con punto, decimal con coma). */
-function parseMercadoArgentineAmount(val) {
-  if (val === null || val === undefined || val === "") return 0;
-  if (typeof val === "number" && !Number.isNaN(val)) return val;
-  let s = String(val).trim().replace(/\s/g, "");
-  if (!s) return 0;
-  const neg = s.startsWith("-");
-  if (neg) s = s.slice(1);
-  s = s.replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(s);
-  if (Number.isNaN(n)) return 0;
-  return neg ? -n : n;
-}
-
-function mercadoReleaseDateToDisplay(s) {
-  const m = String(s).trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (!m) return String(s || "").trim();
-  return `${m[1]}/${m[2]}/${m[3]}`;
-}
-
-function mercadoReleaseDateToMonthKey(s) {
-  const m = String(s).trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (!m) return "";
-  return `${m[3]}-${m[2]}`;
-}
-
-function textLooksLikeMercadoNewExport(text) {
-  const t = String(text).slice(0, 4000);
-  return t.includes("RELEASE_DATE") && t.includes("TRANSACTION_NET_AMOUNT") && t.includes("REFERENCE_ID");
-}
-
-/** CSV nuevo (2025+): sección de saldos + RELEASE_DATE;… Montos con miles en punto y decimal en coma. Mejor leer texto plano: XLSX altera fechas y números. */
-function parseMercadoDebitoCsvNewExport(text) {
-  const lines = String(text)
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-  const headerIdx = lines.findIndex((l) => l.split(";")[0]?.trim() === "RELEASE_DATE");
-  if (headerIdx < 0) return [];
-  const headers = lines[headerIdx].split(";").map((h) => h.trim());
-  const out = [];
-  for (let i = headerIdx + 1; i < lines.length; i += 1) {
-    const parts = lines[i].split(";");
-    if (parts.length < headers.length) continue;
-    const row = {};
-    headers.forEach((h, j) => {
-      row[h] = parts[j] !== undefined ? String(parts[j]).trim() : "";
-    });
-    const releaseDate = row.RELEASE_DATE || "";
-    const transactionType = String(row.TRANSACTION_TYPE || "").replace(/\s+/g, " ").trim();
-    const refId = row.REFERENCE_ID || "";
-    const amount = parseMercadoArgentineAmount(row.TRANSACTION_NET_AMOUNT);
-    if (!releaseDate && !transactionType && amount === 0) continue;
-    out.push({
-      date: mercadoReleaseDateToDisplay(releaseDate),
-      description: transactionType,
-      raw_id: String(refId),
-      category: categorizeMercadoNewExport(transactionType),
-      bank: "Mercado Pago",
-      card_brand: "Cuenta",
-      card_type: "Débito",
-      card_last4: null,
-      amount,
-      monthKey: mercadoReleaseDateToMonthKey(releaseDate),
-      is_unknown: false
-    });
-  }
-  return out;
 }
 
 function matrixRowsToObjects(matrix, headerIdx) {
@@ -673,6 +608,7 @@ function App() {
 
   const personalExpenses = useMemo(() => allExpenses.filter((e) => !isSantiEntry(e)), [allExpenses]);
   const sharedExpenses = useMemo(() => allExpenses.filter((e) => e.sharedWithSanti), [allExpenses]);
+  const importedSources = useMemo(() => summarizeImportedSources(allExpenses), [allExpenses]);
 
   const filteredExpenses = useMemo(
     () =>
@@ -1003,7 +939,6 @@ function App() {
     try {
       const parsedExpenses = [];
       for (const f of uploadedFiles) {
-        const sourceFile = f.name;
         let type = detectStatementType(f.name);
         if (type === "unknown") {
           const head = await f.slice(0, 2000).text();
@@ -1015,46 +950,46 @@ function App() {
           if (ext === "csv") {
             const text = await f.text();
             if (textLooksLikeMercadoNewExport(text)) {
-              parsedExpenses.push(...parseMercadoDebitoCsvNewExport(text).map((row) => ({ ...row, sourceFile })));
+              parsedExpenses.push(...attachImportedSource(f.name, parseMercadoDebitoCsvNewExport(text)));
             } else {
               const wb = XLSX.read(text, { type: "string", FS: ";" });
-              parsedExpenses.push(...parseMercadoDebitoWorkbook(wb).map((row) => ({ ...row, sourceFile })));
+              parsedExpenses.push(...attachImportedSource(f.name, parseMercadoDebitoWorkbook(wb)));
             }
           } else {
             const wb = XLSX.read(await f.arrayBuffer(), { type: "array", FS: ";" });
-            parsedExpenses.push(...parseMercadoDebitoWorkbook(wb).map((row) => ({ ...row, sourceFile })));
+            parsedExpenses.push(...attachImportedSource(f.name, parseMercadoDebitoWorkbook(wb)));
           }
           continue;
         }
 
         const content = await readFileContent(f);
         if (type === "patagonia-debito") {
-          parsedExpenses.push(...parsePatagoniaDebito(content).map((row) => ({ ...row, sourceFile })));
+          parsedExpenses.push(...attachImportedSource(f.name, parsePatagoniaDebito(content)));
           continue;
         }
         if (type === "patagonia-credito-visa") {
-          parsedExpenses.push(...parseCreditPdfGeneric(content, "Patagonia", "Visa").map((row) => ({ ...row, sourceFile })));
+          parsedExpenses.push(...attachImportedSource(f.name, parseCreditPdfGeneric(content, "Patagonia", "Visa")));
           continue;
         }
         if (type === "patagonia-credito-master") {
-          parsedExpenses.push(...parseCreditPdfGeneric(content, "Patagonia", "Mastercard").map((row) => ({ ...row, sourceFile })));
+          parsedExpenses.push(...attachImportedSource(f.name, parseCreditPdfGeneric(content, "Patagonia", "Mastercard")));
           continue;
         }
         if (type === "galicia-credito-visa") {
-          parsedExpenses.push(...parseCreditPdfGeneric(content, "Galicia", "Visa").map((row) => ({ ...row, sourceFile })));
+          parsedExpenses.push(...attachImportedSource(f.name, parseCreditPdfGeneric(content, "Galicia", "Visa")));
           continue;
         }
         if (type === "galicia-credito-master") {
-          parsedExpenses.push(...parseCreditPdfGeneric(content, "Galicia", "Mastercard").map((row) => ({ ...row, sourceFile })));
+          parsedExpenses.push(...attachImportedSource(f.name, parseCreditPdfGeneric(content, "Galicia", "Mastercard")));
           continue;
         }
         if (type === "galicia-debito") {
           const ext = (f.name.split(".").pop() || "").toLowerCase();
           if (ext === "pdf") {
-            parsedExpenses.push(...parseGaliciaDebitoPdf(content).map((row) => ({ ...row, sourceFile })));
+            parsedExpenses.push(...attachImportedSource(f.name, parseGaliciaDebitoPdf(content)));
           } else {
             const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
-            parsedExpenses.push(...parseGaliciaDebitoWorkbook(wb).map((row) => ({ ...row, sourceFile })));
+            parsedExpenses.push(...attachImportedSource(f.name, parseGaliciaDebitoWorkbook(wb)));
           }
           continue;
         }
@@ -1202,6 +1137,32 @@ function App() {
       setAnalysisMessage("");
     } catch (e) {
       alert(`No se pudo borrar el historial: ${e.message}`);
+    }
+  }
+
+  async function deleteStoredSource(sourceFile) {
+    const name = String(sourceFile || "").trim();
+    if (!name) return;
+    const count = allExpenses.filter((e) => e.sourceFile === name).length;
+    if (
+      !confirm(
+        `¿Borrar los ${count} movimientos de «${name}»? Después podés volver a importar ese archivo.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteExpensesBySourceFile(name);
+      setAllExpenses((prev) => prev.filter((e) => e.sourceFile !== name));
+      setSelectedExpenseIds((prev) => {
+        const removed = new Set(
+          allExpenses.filter((e) => e.sourceFile === name).map((e) => e.id).filter(Boolean)
+        );
+        return prev.filter((id) => !removed.has(id));
+      });
+      setAnalysisMessage(`Se eliminó «${name}». Ya podés volver a subirlo.`);
+    } catch (e) {
+      alert(`No se pudo borrar el archivo: ${e.message}`);
     }
   }
 
@@ -1492,7 +1453,7 @@ function App() {
         <div className="app-header-row">
           <div>
             <h1>Mis gastos del mes</h1>
-            <p>Resúmenes Patagonia, Galicia y Mercado Pago · Guardados en la nube</p>
+            <p>Un rincón calmo para Patagonia, Galicia y Mercado Pago</p>
           </div>
           {sessionUser && (
             <div className="app-header-user">
@@ -1571,6 +1532,8 @@ function App() {
           startAnalysis={startAnalysis}
           clearImportQueue={clearImportQueue}
           clearStoredExpenses={clearStoredExpenses}
+          importedSources={importedSources}
+          onDeleteSource={deleteStoredSource}
           analysisMessage={analysisMessage}
           hasStoredExpenses={allExpenses.length > 0}
         />

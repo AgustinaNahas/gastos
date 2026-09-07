@@ -115,16 +115,22 @@ export function applyConfiguredCategory(expense, rules, availableCategories = DE
 
 export function categorize(description) {
   const d = (description || "").toLowerCase();
-  if (/super|SUPERMERCADO|SUPER|Carrefour|dia|carrefour|coto|jumbo/.test(d)) return "Supermercado";
+  if (/farmacia|farmacity|salud|medic|osde/.test(d)) return "Salud";
+  if (/super|supermercado|carrefour|coto|jumbo|\bdia\b|hipolito/.test(d)) return "Supermercado";
   if (/sube|transporte|bus|subte|emova|uber|cabify/.test(d)) return "Transporte";
-  if (/spotify|netflix|cine|entradas|google|steam|playstation|xbox/.test(d)) return "Hobbies";
-  if (/lunch|resto|pedidosya|grido|cafe|food/.test(d)) return "Pedidos";
+  if (/spotify|netflix|cine|entradas|google|steam|playstation|xbox|despegar/.test(d)) return "Hobbies";
+  if (
+    /lunch|resto|pedidosya|grido|cafe|food|pasteler|brocoli|vicente lopez|open 25|kiosco/.test(d)
+  ) {
+    return "Pedidos";
+  }
   if (/pelu|barber|cosmeti|farmacity\s+beauty|perfume/.test(d)) return "Imagen";
   if (/teatro|bar|boliche|salida|show/.test(d)) return "Salida";
-  if (/tarjeta|resumen|visa|master/.test(d)) return "Tarjetas";
+  if (/tarjeta|resumen|visa|master|creditos de mercado pago|créditos de mercado pago/.test(d)) {
+    return "Tarjetas";
+  }
   if (/expensa|alquiler|consorcio|inmobiliaria|casa/.test(d)) return "Casa";
   if (/metrogas|edenor|aysa|servicio|debito automatico/.test(d)) return "Servicios";
-  if (/farm|salud|medic|osde/.test(d)) return "Salud";
   if (/galileo/.test(d)) return "Galileo";
   if (/transferencia|terceros|debin/.test(d)) return "Otros";
   return "Otros";
@@ -140,30 +146,41 @@ export function categorizeMercadoRow(row, description) {
   }
   const pm = String(row.PAYMENT_METHOD_TYPE || "");
   if (pm === "bank_transfer") return "Otros";
-  const d = description.toLowerCase();
-  if (d.includes("qr") || d.includes("wallet")) return "Otros";
   return categorize(description);
 }
 
-export function categorizeMercadoNewExport(description) {
-  const d = String(description || "").toLowerCase().trim();
-  if (!d) return "Otros";
-  if (d.includes("rendimientos")) return "Otros";
-  if (d.includes("transferencia enviada") || d.includes("transferencia recibida")) return "Otros";
-  if (d.includes("ingreso de dinero") || d.includes("dinero retirado")) return "Otros";
-  if (d.includes("pago de servicio")) return "Servicios";
+export function categorizeMercadoNewExport(description, rawType = "") {
+  const blob = `${description || ""} ${rawType || ""}`.toLowerCase();
+  if (/reserva ·|retiro bolsa|ingreso a mercado pago/.test(blob)) return "Otros";
+  if (blob.includes("rendimientos")) return "Otros";
+  if (blob.includes("créditos de mercado pago") || blob.includes("creditos de mercado pago")) {
+    return "Tarjetas";
+  }
+  if (blob.includes("pago de servicio")) return "Servicios";
   return categorize(description);
+}
+
+export function isMercadoInternalMovement(expense) {
+  if (String(expense?.bank || "") !== "Mercado Pago") return false;
+  const d = normalizeText(expense.description || "").replace(/\s+/g, " ");
+  const medium = normalizeText(expense.card_brand || "");
+  if (medium === "bolsa" || medium === "ingreso") return true;
+  if (d.startsWith("reserva ·") || d.startsWith("retiro bolsa")) return true;
+  if (d.includes("ingreso a mercado pago") || d.includes("ingreso de dinero")) return true;
+  if (d.includes("dinero reservado") || d.includes("dinero retirado") || d.includes("reserva por gastos")) {
+    return true;
+  }
+  return false;
 }
 
 /** Categoría heurística base (sin reglas del usuario) para reaplicar reglas al vuelo. */
 export function baselineCategoryForExpense(e) {
   const desc = e.description || "";
   if (e.bank === "Mercado Pago") {
+    if (isMercadoInternalMovement(e)) return "Otros";
     const d = desc.toLowerCase();
-    if (d.includes("transferencia bancaria")) return "Otros";
-    if (d.includes("transferencia enviada") || d.includes("transferencia recibida")) return "Otros";
-    if (d.includes("rendimientos") || d.includes("ingreso de dinero") || d.includes("dinero retirado")) return "Otros";
-    if (d.includes("qr") || d.includes("wallet")) return "Otros";
+    if (d.includes("rendimientos")) return "Otros";
+    return categorize(desc);
   }
   return categorize(desc);
 }

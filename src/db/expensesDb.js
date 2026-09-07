@@ -201,3 +201,10 @@ export async function deleteExpensesByIds(ids) {
   const { error } = await supabase.from("expenses").delete().in("id", ids);
   if (error) throw error;
 }
+
+export async function deleteExpensesBySourceFile(sourceFile) {
+  const name = String(sourceFile || "").trim();
+  if (!name) return;
+  const { error } = await supabase.from("expenses").delete().eq("source_file", name);
+  if (error) throw error;
+}

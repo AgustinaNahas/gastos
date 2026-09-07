@@ -11,6 +11,8 @@ export default function ImportView({
   startAnalysis,
   clearImportQueue,
   clearStoredExpenses,
+  importedSources = [],
+  onDeleteSource,
   analysisMessage,
   hasStoredExpenses
 }) {
@@ -83,6 +85,38 @@ export default function ImportView({
         </button>
       </div>
       {analysisMessage && <div className="alert-inline">{analysisMessage}</div>}
+
+      {importedSources.length > 0 && (
+        <div className="imported-sources">
+          <h3 className="imported-sources-title">Ya guardados</h3>
+          <p className="imported-sources-lead">
+            Si un resumen quedó mal (por ejemplo Mercado Pago), borralo acá y volvé a subirlo. No hace falta vaciar todo.
+          </p>
+          <ul className="imported-sources-list">
+            {importedSources.map((src) => (
+              <li key={src.sourceFile} className="imported-source-item">
+                <div className="imported-source-meta">
+                  <span className="imported-source-name" title={src.sourceFile}>
+                    {src.sourceFile}
+                  </span>
+                  <span className="imported-source-stats">
+                    {src.bank} · {src.monthsLabel} · {src.count} mov.
+                    {src.gastos ? ` · ${src.gastos} gastos` : ""}
+                    {src.ingresos ? ` · ${src.ingresos} ingresos` : ""}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost btn-danger btn-inline"
+                  onClick={() => onDeleteSource?.(src.sourceFile)}
+                >
+                  Quitar
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

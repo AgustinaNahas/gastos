@@ -1,4 +1,4 @@
-import { categorize } from "../utils/expenseCategories.js";
+import { categorize, categorizeMercadoNewExport } from "../utils/expenseCategories.js";
 
 const MONTH_ABBR = {
   ene: "01",
@@ -229,4 +229,131 @@ export function parseCreditPdfGeneric(text, bank, cardBrand) {
     });
   }
   return expenses;
+}
+
+function parseMercadoArgentineAmount(val) {
+  if (val === null || val === undefined || val === "") return 0;
+  if (typeof val === "number" && !Number.isNaN(val)) return val;
+  let s = String(val).trim().replace(/\s/g, "");
+  if (!s) return 0;
+  const neg = s.startsWith("-");
+  if (neg) s = s.slice(1);
+  s = s.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(s);
+  if (Number.isNaN(n)) return 0;
+  return neg ? -n : n;
+}
+
+function mercadoReleaseDateToDisplay(s) {
+  const m = String(s).trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!m) return String(s || "").trim();
+  return `${m[1]}/${m[2]}/${m[3]}`;
+}
+
+function mercadoReleaseDateToMonthKey(s) {
+  const m = String(s).trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!m) return "";
+  return `${m[3]}-${m[2]}`;
+}
+
+export function textLooksLikeMercadoNewExport(text) {
+  const t = String(text).slice(0, 4000);
+  return t.includes("RELEASE_DATE") && t.includes("TRANSACTION_NET_AMOUNT") && t.includes("REFERENCE_ID");
+}
+
+/**
+ * CSV actual de Mercado Pago: saldos + RELEASE_DATE;TRANSACTION_TYPE;REFERENCE_ID;…
+ * Deja el comercio / contraparte como descripción y el tipo en card_brand.
+ */
+export function interpretMercadoNewType(rawType) {
+  const t = String(rawType || "").replace(/\s+/g, " ").trim();
+  const lower = t.toLowerCase();
+
+  const qr = t.match(/^pago con qr\s+(.+)$/i);
+  if (qr) {
+    const merchant = qr[1].trim();
+    return { description: merchant, medium: "QR", internal: false };
+  }
+
+  const pago = t.match(/^pago\s+(.+)$/i);
+  if (pago && pago[1].trim()) {
+    return { description: pago[1].trim(), medium: "Pago", internal: false };
+  }
+  if (/^pago$/i.test(t)) return { description: "Pago", medium: "Pago", internal: false };
+
+  const sent = t.match(/^transferencia enviada\s+(.+)$/i);
+  if (sent) return { description: sent[1].trim(), medium: "Enviada", internal: false };
+  const recv = t.match(/^transferencia recibida\s+(.+)$/i);
+  if (recv) return { description: recv[1].trim(), medium: "Recibida", internal: false };
+
+  const reservaGastos = t.match(/^reserva por gastos\s*(.*)$/i);
+  if (reservaGastos) {
+    const pocket = reservaGastos[1].trim() || "bolsa";
+    return { description: `Reserva · ${pocket}`, medium: "Bolsa", internal: true };
+  }
+  const reservado = t.match(/^dinero reservado\s*(.*)$/i);
+  if (reservado) {
+    const pocket = reservado[1].trim() || "bolsa";
+    return { description: `Reserva · ${pocket}`, medium: "Bolsa", internal: true };
+  }
+  const retirado = t.match(/^dinero retirado\s*(.*)$/i);
+  if (retirado) {
+    const pocket = retirado[1].trim() || "bolsa";
+    return { description: `Retiro bolsa · ${pocket}`, medium: "Bolsa", internal: true };
+  }
+
+  if (lower.startsWith("ingreso de dinero")) {
+    return { description: "Ingreso a Mercado Pago", medium: "Ingreso", internal: true };
+  }
+  if (lower.startsWith("rendimientos")) {
+    return { description: "Rendimientos", medium: "Rendimientos", internal: false };
+  }
+  if (lower.includes("créditos de mercado pago") || lower.includes("creditos de mercado pago")) {
+    return { description: "Créditos Mercado Pago", medium: "Crédito MP", internal: false };
+  }
+  if (lower.startsWith("compra mercado libre")) {
+    return { description: "Mercado Libre", medium: "Mercado Libre", internal: false };
+  }
+
+  return { description: t || "Movimiento", medium: "Cuenta", internal: false };
+}
+
+export function parseMercadoDebitoCsvNewExport(text) {
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const headerIdx = lines.findIndex((l) => l.split(";")[0]?.trim() === "RELEASE_DATE");
+  if (headerIdx < 0) return [];
+  const headers = lines[headerIdx].split(";").map((h) => h.trim());
+  const out = [];
+  for (let i = headerIdx + 1; i < lines.length; i += 1) {
+    const parts = lines[i].split(";");
+    if (parts.length < 4) continue;
+    const row = {};
+    headers.forEach((h, j) => {
+      row[h] = parts[j] !== undefined ? String(parts[j]).trim() : "";
+    });
+    const releaseDate = row.RELEASE_DATE || "";
+    const rawType = String(row.TRANSACTION_TYPE || "").replace(/\s+/g, " ").trim();
+    const refId = row.REFERENCE_ID || "";
+    const amount = parseMercadoArgentineAmount(row.TRANSACTION_NET_AMOUNT);
+    if (!releaseDate && !rawType && amount === 0) continue;
+    const interpreted = interpretMercadoNewType(rawType);
+    out.push({
+      date: mercadoReleaseDateToDisplay(releaseDate),
+      description: interpreted.description,
+      raw_id: String(refId),
+      category: categorizeMercadoNewExport(interpreted.description, rawType),
+      bank: "Mercado Pago",
+      card_brand: interpreted.medium,
+      card_type: "Débito",
+      card_last4: null,
+      amount,
+      monthKey: mercadoReleaseDateToMonthKey(releaseDate),
+      is_unknown: false,
+      isInternal: interpreted.internal
+    });
+  }
+  return out;
 }

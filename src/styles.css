@@ -3,51 +3,65 @@
 }
 
 :root {
-  /* Paleta global (única fuente de color del sitio) */
-  --brand-deep: #1a202c;
-  --brand-primary: #2b6cb0;
-  --brand-sky: #63b3ed;
-  --brand-ice: #ebf8ff;
+  --linen: #f4efe6;
+  --mist: #e7eee8;
+  --sand: #e4d4b8;
+  --sage: #6f8f7a;
+  --sage-deep: #3f5a4a;
+  --clay: #c56a4a;
+  --moss: #4f8a6b;
 
-  --bg: var(--brand-ice);
-  --surface: #ffffff;
-  --surface-subtle: color-mix(in srgb, var(--brand-ice) 52%, var(--surface));
-  --surface-muted: color-mix(in srgb, var(--brand-sky) 14%, var(--brand-ice));
+  --brand-deep: var(--sage-deep);
+  --brand-primary: var(--sage);
+  --brand-sky: #a8c4b3;
+  --brand-ice: var(--mist);
 
-  --border: color-mix(in srgb, var(--brand-primary) 22%, var(--brand-ice));
-  --border-strong: color-mix(in srgb, var(--brand-primary) 38%, var(--brand-ice));
+  --bg: var(--linen);
+  --surface: #fffdf8;
+  --surface-subtle: color-mix(in srgb, var(--linen) 70%, #ffffff);
+  --surface-muted: color-mix(in srgb, var(--sage) 12%, var(--linen));
 
-  --text: var(--brand-deep);
-  --muted: color-mix(in srgb, var(--brand-deep) 56%, var(--brand-sky));
+  --border: color-mix(in srgb, var(--sage) 22%, var(--linen));
+  --border-strong: color-mix(in srgb, var(--sage) 40%, var(--sand));
 
-  --accent: var(--brand-primary);
-  --accent-soft: color-mix(in srgb, var(--brand-ice) 70%, var(--brand-sky));
-  --accent-ring: color-mix(in srgb, var(--brand-primary) 32%, transparent);
+  --text: #2f3b34;
+  --muted: #6b7a70;
 
-  --on-primary: #ffffff;
+  --accent: var(--sage-deep);
+  --accent-soft: color-mix(in srgb, var(--sage) 18%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--sage) 28%, transparent);
 
-  --shadow: 0 1px 3px color-mix(in srgb, var(--brand-deep) 10%, transparent);
-  --shadow-lg: 0 8px 28px color-mix(in srgb, var(--brand-deep) 9%, transparent);
+  --on-primary: #f7f3ea;
 
-  /* “Peligro” / énfasis destructivo: solo con la paleta */
-  --danger: var(--brand-primary);
-  --danger-fg: var(--brand-deep);
-  --danger-border: color-mix(in srgb, var(--brand-primary) 45%, var(--brand-ice));
-  --danger-bg: color-mix(in srgb, var(--brand-ice) 80%, var(--brand-sky));
+  --shadow: 0 10px 30px color-mix(in srgb, var(--sage-deep) 7%, transparent);
+  --shadow-lg: 0 18px 48px color-mix(in srgb, var(--sage-deep) 10%, transparent);
 
-  --positive: var(--brand-sky);
-  --overlay: color-mix(in srgb, var(--brand-deep) 45%, transparent);
+  --danger: var(--clay);
+  --danger-fg: var(--clay);
+  --danger-border: color-mix(in srgb, var(--clay) 35%, var(--linen));
+  --danger-bg: color-mix(in srgb, var(--clay) 12%, var(--surface));
 
-  --radius: 12px;
+  --positive: var(--moss);
+  --overlay: color-mix(in srgb, var(--sage-deep) 38%, transparent);
+
+  --radius: 18px;
+  --font-display: "Fraunces", "Times New Roman", serif;
+  --font-ui: "Nunito Sans", system-ui, sans-serif;
 }
 
 body {
   margin: 0;
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
-  background: var(--bg);
+  font-family: var(--font-ui);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 55% at 8% -8%, color-mix(in srgb, var(--sage) 26%, transparent), transparent 52%),
+    radial-gradient(ellipse 70% 45% at 100% 0%, color-mix(in srgb, var(--sand) 70%, transparent), transparent 48%),
+    radial-gradient(ellipse 55% 35% at 50% 100%, color-mix(in srgb, var(--mist) 90%, transparent), transparent);
+  background-attachment: fixed;
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
 
 .app {
@@ -127,9 +141,11 @@ body {
 
 .app-header h1 {
   margin: 0 0 6px;
-  font-size: 1.65rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--sage-deep);
 }
 
 .app-header p {
@@ -172,13 +188,13 @@ body {
 
 .app-tab-active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--sage-deep);
   box-shadow: inset 0 0 0 1px var(--accent-ring);
 }
 
 .app-tab-active:hover {
   background: var(--accent-soft);
-  color: var(--brand-primary);
+  color: var(--sage-deep);
 }
 
 .empty-tab-hint .empty-tab-text {
@@ -739,6 +755,67 @@ body {
   color: var(--accent);
 }
 
+.imported-sources {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.imported-sources-title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--sage-deep);
+}
+
+.imported-sources-lead {
+  margin: 0 0 14px;
+  font-size: 0.88rem;
+  color: var(--muted);
+  max-width: 52ch;
+}
+
+.imported-sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.imported-source-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.imported-source-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.imported-source-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imported-source-stats {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .actions-row {
   display: flex;
   gap: 10px;
@@ -762,8 +839,8 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
-  background: color-mix(in srgb, var(--brand-primary) 90%, var(--brand-deep));
+  opacity: 0.92;
+  background: color-mix(in srgb, var(--sage-deep) 88%, #1c2a22);
 }
 
 .btn-primary:disabled {
