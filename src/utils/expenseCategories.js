@@ -131,11 +131,17 @@ export function categorize(description) {
 }
 
 export function categorizeMercadoRow(row, description) {
+  const sale = String(row.SALE_DETAIL || "")
+    .replace(/^["'\s]+|["'\s]+$/g, "")
+    .trim();
+  if (sale && !/^varios$/i.test(sale)) {
+    const fromSale = categorize(sale);
+    if (fromSale !== "Otros") return fromSale;
+  }
   const pm = String(row.PAYMENT_METHOD_TYPE || "");
   if (pm === "bank_transfer") return "Otros";
   const d = description.toLowerCase();
-  if (d.includes("qr")) return "Otros";
-  if (d.includes("wallet")) return "Otros";
+  if (d.includes("qr") || d.includes("wallet")) return "Otros";
   return categorize(description);
 }
 

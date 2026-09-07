@@ -71,7 +71,8 @@ export default function TableView({
   updateExpenseCategory,
   formatDateCellWithWeekday,
   displayExpenseMedium,
-  exportFile
+  exportFile,
+  toggleExpenseShared
 }) {
   return (
     <section className="results-section panel">
@@ -477,6 +478,9 @@ export default function TableView({
                   aria-label="Seleccionar todos los movimientos visibles"
                 />
               </th>
+              <th className="th-shared" title="Compartido con Santi">
+                Santi
+              </th>
               {visibleColumns.date && renderSortableHeader("Fecha", "date")}
               {visibleColumns.description && renderSortableHeader("Descripción", "description")}
               {visibleColumns.category && renderSortableHeader("Categoría", "category")}
@@ -500,7 +504,7 @@ export default function TableView({
                 const descExact = String(e.description || "").trim();
                 const pal = categoryPaletteIndex(e.category);
                 return (
-                  <tr key={e.id || `${e.dedupeKey}-${i}`}>
+                  <tr key={e.id || `${e.dedupeKey}-${i}`} className={e.sharedWithSanti ? "row-shared" : undefined}>
                     <td className="td-select">
                       <input
                         type="checkbox"
@@ -508,6 +512,16 @@ export default function TableView({
                         disabled={!e.id}
                         onChange={() => toggleExpenseSelected(e.id)}
                         aria-label={`Seleccionar movimiento ${e.date || ""}`}
+                      />
+                    </td>
+                    <td className="td-shared">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(e.sharedWithSanti)}
+                        disabled={!e.id}
+                        onChange={() => toggleExpenseShared(e)}
+                        title={e.sharedWithSanti ? "Dejar de compartir con Santi" : "Marcar como compartido con Santi"}
+                        aria-label={`Compartir con Santi: ${e.description || e.date || ""}`}
                       />
                     </td>
                     {visibleColumns.date && (

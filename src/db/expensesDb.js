@@ -1,8 +1,4 @@
-import { openDB } from "idb";
-
-const DB_NAME = "gastos-app";
-const DB_VERSION = 1;
-const STORE = "expenses";
+import { requireUserId, supabase } from "../lib/supabaseClient";
 
 function djb2(str) {
   let hash = 5381;
@@ -12,8 +8,7 @@ function djb2(str) {
   return (hash >>> 0).toString(36);
 }
 
-/** UUID v4; fallback si no hay Web Crypto (HTTP no seguro, navegadores viejos). */
-function newExpenseId() {
+export function newExpenseId() {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
@@ -23,10 +18,6 @@ function newExpenseId() {
   });
 }
 
-/**
- * Clave estable para no duplicar la misma fila al reimportar el mismo archivo.
- * Incluye archivo fuente, fecha, monto, descripción normalizada, banco, tipo y raw_id (p. ej. SOURCE_ID MP).
- */
 export function makeDedupeKey(partial) {
   const norm = String(partial.description || "")
     .replace(/\s+/g, " ")
@@ -56,17 +47,13 @@ function deriveMonthKey(dateStr) {
   return "";
 }
 
-/**
- * @param {object} e - fila parseada (sin id ni dedupeKey obligatorios)
- * @param {string} sourceFile - nombre del archivo importado
- */
 export function buildStoredExpense(e, sourceFile) {
   const monthKey = e.monthKey || deriveMonthKey(e.date);
   const dedupeKey = makeDedupeKey({ ...e, sourceFile });
   return {
-    id: newExpenseId(),
+    id: e.id || newExpenseId(),
     dedupeKey,
-    savedAt: Date.now(),
+    savedAt: e.savedAt || Date.now(),
     sourceFile: sourceFile || "",
     date: e.date ?? "",
     description: e.description ?? "",
@@ -78,53 +65,139 @@ export function buildStoredExpense(e, sourceFile) {
     card_last4: e.card_last4 ?? null,
     amount: typeof e.amount === "number" ? e.amount : Number(e.amount) || 0,
     monthKey,
-    is_unknown: !!e.is_unknown
+    is_unknown: !!e.is_unknown,
+    sharedWithSanti: !!e.sharedWithSanti,
+    paidBy: e.paidBy === "santi" ? "santi" : "me",
+    categoryManual: !!e.categoryManual
   };
 }
 
-export async function getDb() {
-  return openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: "id" });
-        store.createIndex("byDedupe", "dedupeKey", { unique: true });
-        store.createIndex("monthKey", "monthKey");
-        store.createIndex("savedAt", "savedAt");
-      }
-    }
-  });
+function toRow(record, userId) {
+  const savedAt = record.savedAt ? new Date(record.savedAt).toISOString() : new Date().toISOString();
+  return {
+    id: record.id,
+    user_id: userId,
+    dedupe_key: record.dedupeKey,
+    saved_at: savedAt,
+    source_file: record.sourceFile || "",
+    date: record.date || "",
+    description: record.description || "",
+    raw_id: record.raw_id || "",
+    category: record.category || "Otros",
+    bank: record.bank || "",
+    card_brand: record.card_brand ?? null,
+    card_type: record.card_type ?? null,
+    card_last4: record.card_last4 ?? null,
+    amount: Number(record.amount) || 0,
+    month_key: record.monthKey || deriveMonthKey(record.date),
+    is_unknown: !!record.is_unknown,
+    shared_with_santi: !!record.sharedWithSanti,
+    paid_by: record.paidBy === "santi" ? "santi" : "me",
+    category_manual: !!record.categoryManual
+  };
+}
+
+function fromRow(row) {
+  const savedMs = row.saved_at ? new Date(row.saved_at).getTime() : Date.now();
+  return {
+    id: row.id,
+    dedupeKey: row.dedupe_key,
+    savedAt: Number.isFinite(savedMs) ? savedMs : Date.now(),
+    sourceFile: row.source_file || "",
+    date: row.date || "",
+    description: row.description || "",
+    raw_id: row.raw_id || "",
+    category: row.category || "Otros",
+    bank: row.bank || "",
+    card_brand: row.card_brand ?? null,
+    card_type: row.card_type ?? null,
+    card_last4: row.card_last4 ?? null,
+    amount: Number(row.amount) || 0,
+    monthKey: row.month_key || deriveMonthKey(row.date),
+    is_unknown: !!row.is_unknown,
+    sharedWithSanti: !!row.shared_with_santi,
+    paidBy: row.paid_by === "santi" ? "santi" : "me",
+    categoryManual: !!row.category_manual
+  };
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 export async function loadAllExpenses() {
-  const db = await getDb();
-  const rows = await db.getAll(STORE);
-  rows.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
-  return rows;
+  if (!supabase) return [];
+  const pageSize = 1000;
+  const all = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .order("saved_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const rows = data || [];
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return all.map(fromRow);
 }
 
 export async function putExpense(record) {
-  const db = await getDb();
-  await db.put(STORE, { ...record, savedAt: record.savedAt ?? Date.now() });
+  const userId = await requireUserId();
+  const row = toRow({ ...record, savedAt: record.savedAt ?? Date.now() }, userId);
+  const { error } = await supabase.from("expenses").upsert(row, { onConflict: "id" });
+  if (error) throw error;
 }
 
 export async function addExpenseIfNew(record) {
-  const db = await getDb();
-  const existing = await db.getFromIndex(STORE, "byDedupe", record.dedupeKey);
-  if (existing) return { added: false, record: existing };
-  await db.add(STORE, record);
-  return { added: true, record };
+  const result = await addManyIfNew([record]);
+  if (result.added[0]) return { added: true, record: result.added[0] };
+  return { added: false, record: result.skipped[0] || record };
+}
+
+export async function addManyIfNew(records) {
+  if (!records.length) return { added: [], skipped: [] };
+  const userId = await requireUserId();
+  const prepared = [];
+  const seen = new Set();
+  for (const r of records) {
+    const rec = {
+      ...r,
+      id: r.id || newExpenseId(),
+      dedupeKey: r.dedupeKey || makeDedupeKey({ ...r, sourceFile: r.sourceFile })
+    };
+    if (seen.has(rec.dedupeKey)) continue;
+    seen.add(rec.dedupeKey);
+    prepared.push(rec);
+  }
+  const existingSet = new Set();
+  for (const keys of chunk(prepared.map((r) => r.dedupeKey), 120)) {
+    const { data, error } = await supabase.from("expenses").select("dedupe_key").in("dedupe_key", keys);
+    if (error) throw error;
+    (data || []).forEach((row) => existingSet.add(row.dedupe_key));
+  }
+  const fresh = prepared.filter((r) => !existingSet.has(r.dedupeKey));
+  const skipped = prepared.filter((r) => existingSet.has(r.dedupeKey));
+  const added = [];
+  for (const group of chunk(fresh, 80)) {
+    const { data, error } = await supabase.from("expenses").insert(group.map((r) => toRow(r, userId))).select();
+    if (error) throw error;
+    added.push(...(data || []).map(fromRow));
+  }
+  return { added, skipped };
 }
 
 export async function clearAllExpenses() {
-  const db = await getDb();
-  await db.clear(STORE);
+  const userId = await requireUserId();
+  const { error } = await supabase.from("expenses").delete().eq("user_id", userId);
+  if (error) throw error;
 }
 
-/** @param {string[]} ids */
 export async function deleteExpensesByIds(ids) {
   if (!ids.length) return;
-  const db = await getDb();
-  const tx = db.transaction(STORE, "readwrite");
-  await Promise.all(ids.map((id) => tx.store.delete(id)));
-  await tx.done;
+  const { error } = await supabase.from("expenses").delete().in("id", ids);
+  if (error) throw error;
 }

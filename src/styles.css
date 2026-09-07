@@ -60,6 +60,71 @@ body {
   margin-bottom: 28px;
 }
 
+.app-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.app-header-user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-header-email {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.auth-panel {
+  max-width: 420px;
+}
+
+.auth-lead {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.auth-form .filter-group span {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.auth-form .filter-group input {
+  font-family: inherit;
+  font-size: 0.875rem;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.auth-form .filter-group input:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-sky) 22%, transparent);
+  outline: none;
+}
+
+.auth-form .btn-primary {
+  width: 100%;
+}
+
 .app-header h1 {
   margin: 0 0 6px;
   font-size: 1.65rem;
@@ -1572,4 +1637,121 @@ tbody tr:hover td {
 
 .results-section {
   margin-top: 8px;
+}
+
+.th-shared,
+.td-shared {
+  width: 52px;
+  text-align: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-left: 4px;
+  padding-right: 4px;
+  vertical-align: middle;
+}
+
+.td-shared input {
+  cursor: pointer;
+}
+
+tr.row-shared td {
+  background: color-mix(in srgb, var(--brand-sky) 10%, transparent);
+}
+
+.selection-dock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.shared-lead {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.stat-value.shared-balance {
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.shared-income-note {
+  margin: -8px 0 16px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.shared-add-form {
+  margin: 4px 0 20px;
+  padding: 16px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.shared-add-title {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.shared-add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.shared-add-desc {
+  grid-column: span 2;
+  min-width: 180px;
+}
+
+@media (max-width: 720px) {
+  .shared-add-desc {
+    grid-column: span 1;
+  }
+}
+
+.shared-add-form .filter-group input[type="text"],
+.shared-add-form .filter-group input[type="date"] {
+  font-family: inherit;
+  font-size: 0.875rem;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.shared-add-form .filter-group input:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-sky) 22%, transparent);
+  outline: none;
+}
+
+.shared-add-submit .btn-primary {
+  flex: 0;
+  min-width: 120px;
+  width: 100%;
+  padding: 10px 16px;
+}
+
+.shared-payer-select {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 6px 28px 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.shared-row-actions {
+  white-space: nowrap;
+  text-align: right;
 }

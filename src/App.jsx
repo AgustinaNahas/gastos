@@ -3,17 +3,22 @@ import * as XLSX from "xlsx";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
-  addExpenseIfNew,
+  addManyIfNew,
   buildStoredExpense,
   clearAllExpenses,
   deleteExpensesByIds,
-  loadAllExpenses,
   putExpense
 } from "./db/expensesDb";
+import { hydrateUserCloud } from "./db/hydrateCloud";
+import { saveRemoteSettings } from "./db/settingsDb";
+import { isSupabaseConfigured, supabase } from "./lib/supabaseClient";
 import { COLUMN_DEFS, DEFAULT_VISIBLE_COLUMNS } from "./columnConfig";
+import AuthView from "./views/AuthView";
 import ImportView from "./views/ImportView";
 import ChartsView, { ChartsEmptyHint } from "./views/ChartsView";
 import TableView, { TableEmptyHint } from "./views/TableView";
+import SharedView from "./views/SharedView";
+import { PAID_BY_ME, PAID_BY_SANTI, isSantiEntry } from "./utils/sharedExpenses";
 import {
   applyConfiguredCategory,
   chartExpenseCategoryKey,
@@ -39,6 +44,13 @@ import {
   saveCategoryColors
 } from "./utils/categoryVisual";
 import { buildPieSlices } from "./utils/chartPie";
+import {
+  inferCardBrand,
+  parseCreditPdfGeneric,
+  parseGaliciaDebitoPdf,
+  parseMoney,
+  parsePatagoniaDebito
+} from "./parsers/statements";
 
 const STORAGE_KEY = "gastos_kb_v2";
 const COLUMN_PREFS_KEY = "gastos_visible_columns_v1";
@@ -148,25 +160,6 @@ function saveAutoCategoryRules(rules) {
   localStorage.setItem(AUTO_RULES_KEY, JSON.stringify(rules));
 }
 
-function parseMoney(value) {
-  if (!value) return 0;
-  const cleaned = String(value).replace(/\$/g, "").replace(/\./g, "").replace(",", ".").replace(/\s+/g, "").trim();
-  if (!cleaned) return 0;
-  const negative = cleaned.startsWith("-") || cleaned.endsWith("-");
-  const numeric = parseFloat(cleaned.replace(/-/g, ""));
-  if (Number.isNaN(numeric)) return 0;
-  return negative ? -numeric : numeric;
-}
-
-function normalizeDate(dateText) {
-  if (!dateText) return "";
-  if (dateText.includes(".")) {
-    const [dd, mm, yy] = dateText.split(".");
-    return `${dd}/${mm}/${yy.length === 2 ? `20${yy}` : yy}`;
-  }
-  return dateText;
-}
-
 function detectStatementType(fileName) {
   const lower = fileName.toLowerCase();
   if (lower.includes("patagonia-debito")) return "patagonia-debito";
@@ -198,6 +191,16 @@ function deriveMonthKey(dateStr) {
 function getCurrentMonthKey() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthKeysToOptions(keys) {
+  return [...new Set((keys || []).filter(Boolean))].sort().reverse().map((k) => {
+    const [y, m] = k.split("-");
+    const d = new Date(Number(y), Number(m) - 1, 1);
+    let label = d.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+    label = label.charAt(0).toUpperCase() + label.slice(1);
+    return { value: k, label };
+  });
 }
 
 function dateStringToLocalDate(dateStr) {
@@ -248,12 +251,27 @@ function mercadoPaymentLabel(pm) {
   return p.replace(/_/g, " ");
 }
 
+function stripMercadoCsvQuotes(value) {
+  return String(value || "")
+    .replace(/^["'\s]+|["'\s]+$/g, "")
+    .replace(/""/g, '"')
+    .trim();
+}
+
 function buildMercadoDescription(row) {
+  const sale = stripMercadoCsvQuotes(row.SALE_DETAIL);
+  const store = stripMercadoCsvQuotes(row.STORE_NAME);
   const txn = String(row.TRANSACTION_TYPE || "MOVIMIENTO").trim();
   const pm = mercadoPaymentLabel(row.PAYMENT_METHOD_TYPE);
-  const parts = [txn, pm];
+  const usefulSale = sale && !/^varios$/i.test(sale) ? sale : "";
+  const label = usefulSale || store || txn;
+  const parts = [label];
+  if (pm && label !== pm) parts.push(pm);
   if (row.SUB_UNIT) parts.push(String(row.SUB_UNIT).trim());
   if (row.BUSINESS_UNIT) parts.push(String(row.BUSINESS_UNIT).trim());
+  if (usefulSale && txn && txn !== "SETTLEMENT" && !usefulSale.toLowerCase().includes(txn.toLowerCase())) {
+    parts.push(txn);
+  }
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -426,79 +444,6 @@ function normalizeStoredMedium(e) {
   };
 }
 
-function parsePatagoniaDebito(text) {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const expenses = [];
-  let current = null;
-  const dateRe = /^(\d{2}\/\d{2}\/\d{4})(?:\s+(.*))?$/;
-  const amountRe = /\$\s*([-\d\.,]+)(?:\s+\$\s*([-\d\.,]+))?/;
-
-  for (const line of lines) {
-    const dateMatch = line.match(dateRe);
-    if (dateMatch) {
-      if (current && current.amount !== null) expenses.push(current);
-      current = { date: dateMatch[1], description: (dateMatch[2] || "").trim(), amount: null };
-      continue;
-    }
-    if (!current) continue;
-    const amountMatch = line.match(amountRe);
-    if (amountMatch) {
-      const debit = parseMoney(amountMatch[1]);
-      const credit = amountMatch[2] ? parseMoney(amountMatch[2]) : 0;
-      current.amount = debit !== 0 ? -Math.abs(debit) : Math.abs(credit);
-      continue;
-    }
-    current.description = `${current.description} ${line.replace(/-\\s*$/g, "")}`.trim();
-  }
-  if (current && current.amount !== null) expenses.push(current);
-
-  return expenses.map((e) => ({
-    date: e.date,
-    description: e.description,
-    raw_id: "",
-    category: categorize(e.description),
-    bank: "Patagonia",
-    card_brand: e.description.toLowerCase().includes("visa") ? "Visa" : e.description.toLowerCase().includes("master") ? "Mastercard" : null,
-    card_type: e.description.toLowerCase().includes("tarjeta credito") ? "Crédito" : "Débito",
-    card_last4: null,
-    amount: e.amount,
-    is_unknown: false
-  }));
-}
-
-function parseCreditPdfGeneric(text, bank, cardBrand) {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const expenses = [];
-  const rowRe = /^(\d{2}[./]\d{2}[./]\d{2,4})\s+(.+?)\s+(-?\d{1,3}(?:\.\d{3})*,\d{2}-?)$/;
-  for (const line of lines) {
-    const m = line.match(rowRe);
-    if (!m) continue;
-    const description = m[2].trim();
-    const amount = parseMoney(m[3]);
-    if (description.toLowerCase().includes("saldo anterior")) continue;
-    expenses.push({
-      date: normalizeDate(m[1]),
-      description,
-      raw_id: "",
-      category: categorize(description),
-      bank,
-      card_brand: cardBrand,
-      card_type: "Crédito",
-      card_last4: null,
-      amount: amount === 0 ? 0 : amount < 0 ? amount : -Math.abs(amount),
-      is_unknown: false
-    });
-  }
-  return expenses;
-}
-
-function inferCardBrand(description) {
-  const d = String(description || "").toLowerCase();
-  if (d.includes("visa")) return "Visa";
-  if (d.includes("master") || d.includes("maestro")) return "Mastercard";
-  return null;
-}
-
 function displayExpenseMedium(e) {
   const bank = String(e.bank || "").toLowerCase();
   const tipo = String(e.card_type || "").toLowerCase();
@@ -547,6 +492,8 @@ function parseGaliciaDebitoWorkbook(workbook) {
 
 function App() {
   const fileInputRef = useRef(null);
+  const [sessionUser, setSessionUser] = useState(undefined);
+  const [cloudReady, setCloudReady] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [allExpenses, setAllExpenses] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -571,7 +518,7 @@ function App() {
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const t = sessionStorage.getItem("gastos_active_tab_v1");
-      if (t === "table" || t === "import" || t === "charts") return t;
+      if (t === "table" || t === "import" || t === "charts" || t === "shared") return t;
     } catch {
       /* ignore */
     }
@@ -600,6 +547,7 @@ function App() {
   const [openColorPickerFor, setOpenColorPickerFor] = useState(null);
   const [selectedExpenseIds, setSelectedExpenseIds] = useState([]);
   const [tableSort, setTableSort] = useState({ key: "date", dir: "desc" });
+  const [sharedMonth, setSharedMonth] = useState("");
 
   const categoryPaletteIndex = (catName) => paletteSwatchIndexForCategory(catName, categoryColors);
   const categoryVisualStyle = (catName) => {
@@ -608,44 +556,75 @@ function App() {
   };
 
   useEffect(() => {
+    if (!isSupabaseConfigured() || !supabase) {
+      setSessionUser(null);
+      return undefined;
+    }
     let cancelled = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled) setSessionUser(data.session?.user ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionUser(session?.user ?? null);
+    });
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionUser) {
+      setCloudReady(false);
+      setAllExpenses([]);
+      setSelectedExpenseIds([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setCloudReady(false);
     (async () => {
       try {
-        const rows = await loadAllExpenses();
-        if (cancelled || rows.length === 0) return;
-        // No reclasificar al cargar: lo guardado en IndexedDB (p. ej. categoría editada a mano) es la fuente de verdad.
-        // Las reglas se reaplican solo al guardar reglas (commitRulesDraft) o al importar.
-        const next = rows.map((row) => normalizeStoredMedium(row));
-        let changed = false;
-        for (let i = 0; i < rows.length; i += 1) {
-          if (next[i].card_brand !== rows[i].card_brand || next[i].card_last4 !== rows[i].card_last4) {
-            changed = true;
-            break;
-          }
-        }
-        if (changed) {
-          const ts = Date.now();
-          const toSave = next.filter(
-            (e, i) =>
-              e.id && (e.card_brand !== rows[i].card_brand || e.card_last4 !== rows[i].card_last4)
-          );
-          if (toSave.length > 0) {
-            void Promise.all(toSave.map((e) => putExpense({ ...e, savedAt: ts }))).catch(() => {});
-          }
-        }
+        const { settings, expenses } = await hydrateUserCloud(sessionUser.id, { normalizeStoredMedium });
+        if (cancelled) return;
+        setKnowledgeBase(settings.knowledgeBase);
+        saveKB(settings.knowledgeBase);
+        setVisibleColumns(settings.visibleColumns);
+        setAutoCategoryRules(cloneRules(settings.autoRules));
+        setRulesDraft(cloneRules(settings.autoRules));
+        setCategoryOptions(sortCategoriesList(settings.categories));
+        setCategoryColors(settings.categoryColors);
         setCategoryOptions((prev) => {
-          const fromRows = [...new Set(next.map((r) => r.category).filter(Boolean))];
+          const fromRows = [...new Set(expenses.map((r) => r.category).filter(Boolean))];
           return sortCategoriesList([...prev, ...fromRows]);
         });
-        setAllExpenses(next);
+        setAllExpenses(expenses);
+        setCloudReady(true);
       } catch (e) {
         console.error(e);
+        if (!cancelled) {
+          alert(`No se pudieron cargar los gastos: ${e.message}`);
+          setCloudReady(true);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sessionUser?.id]);
+
+  useEffect(() => {
+    if (!sessionUser || !cloudReady) return undefined;
+    const t = setTimeout(() => {
+      void saveRemoteSettings({
+        knowledgeBase,
+        categories: categoryOptions,
+        categoryColors,
+        autoRules: autoCategoryRules,
+        visibleColumns
+      }).catch((err) => console.error(err));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [sessionUser, cloudReady, knowledgeBase, categoryOptions, categoryColors, autoCategoryRules, visibleColumns]);
 
   useEffect(() => {
     try {
@@ -692,9 +671,12 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showRulesConfig]);
 
+  const personalExpenses = useMemo(() => allExpenses.filter((e) => !isSantiEntry(e)), [allExpenses]);
+  const sharedExpenses = useMemo(() => allExpenses.filter((e) => e.sharedWithSanti), [allExpenses]);
+
   const filteredExpenses = useMemo(
     () =>
-      allExpenses.filter(
+      personalExpenses.filter(
         (e) =>
           (!filters.month || e.monthKey === filters.month) &&
           (!filters.cat || e.category === filters.cat) &&
@@ -704,7 +686,7 @@ function App() {
           (!filters.flow || (filters.flow === "in" ? Number(e.amount) > 0 : Number(e.amount) < 0)) &&
           (!filters.excludeinterAccount || !isInterAccountMovement(e))
       ),
-    [allExpenses, filters]
+    [personalExpenses, filters]
   );
 
   const sortedFilteredExpenses = useMemo(() => {
@@ -750,12 +732,12 @@ function App() {
     visibleRowsWithId.length > 0 && visibleRowsWithId.every((e) => selectedExpenseIds.includes(e.id));
 
   const banks = useMemo(
-    () => [...new Set(allExpenses.map((e) => e.bank).filter(Boolean))].sort(),
-    [allExpenses]
+    () => [...new Set(personalExpenses.map((e) => e.bank).filter(Boolean))].sort(),
+    [personalExpenses]
   );
   const cards = useMemo(
-    () => [...new Set(allExpenses.map((e) => e.card_brand).filter(Boolean))].sort(),
-    [allExpenses]
+    () => [...new Set(personalExpenses.map((e) => e.card_brand).filter(Boolean))].sort(),
+    [personalExpenses]
   );
   const categories = useMemo(
     () => sortCategoriesList([...categoryOptions, ...allExpenses.map((e) => e.category).filter(Boolean)]),
@@ -766,16 +748,14 @@ function App() {
     return base.length ? base : ["Otros"];
   }, [categories]);
 
-  const monthOptions = useMemo(() => {
-    const keys = [...new Set(allExpenses.map((e) => e.monthKey).filter(Boolean))].sort().reverse();
-    return keys.map((k) => {
-      const [y, m] = k.split("-");
-      const d = new Date(Number(y), Number(m) - 1, 1);
-      let label = d.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
-      label = label.charAt(0).toUpperCase() + label.slice(1);
-      return { value: k, label };
-    });
-  }, [allExpenses]);
+  const monthOptions = useMemo(
+    () => monthKeysToOptions(personalExpenses.map((e) => e.monthKey)),
+    [personalExpenses]
+  );
+  const sharedMonthOptions = useMemo(
+    () => monthKeysToOptions(sharedExpenses.map((e) => e.monthKey)),
+    [sharedExpenses]
+  );
 
   useEffect(() => {
     if (monthOptions.length === 0) {
@@ -786,6 +766,13 @@ function App() {
       setChartMonth(monthOptions[0].value);
     }
   }, [monthOptions, chartMonth]);
+
+  useEffect(() => {
+    if (sharedMonthOptions.length === 0) return;
+    if (sharedMonth && !sharedMonthOptions.some((m) => m.value === sharedMonth)) {
+      setSharedMonth(sharedMonthOptions[0].value);
+    }
+  }, [sharedMonthOptions, sharedMonth]);
 
   useEffect(() => {
     if (monthOptions.length === 0) return;
@@ -816,7 +803,7 @@ function App() {
         maxWeekday: 1
       };
     }
-    const inMonth = allExpenses.filter(
+    const inMonth = personalExpenses.filter(
       (e) => e.monthKey === month && !isInterAccountMovement(e) && !isCardBillPayment(e)
     );
     const gastos = inMonth.filter((e) => Number(e.amount) < 0);
@@ -922,7 +909,7 @@ function App() {
       weekdayBars,
       maxWeekday
     };
-  }, [allExpenses, chartMonth, chartPieGranularity]);
+  }, [personalExpenses, chartMonth, chartPieGranularity]);
 
   const stats = useMemo(() => {
     const gastos = filteredExpenses.filter((e) => e.amount < 0);
@@ -1062,8 +1049,13 @@ function App() {
           continue;
         }
         if (type === "galicia-debito") {
-          const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
-          parsedExpenses.push(...parseGaliciaDebitoWorkbook(wb).map((row) => ({ ...row, sourceFile })));
+          const ext = (f.name.split(".").pop() || "").toLowerCase();
+          if (ext === "pdf") {
+            parsedExpenses.push(...parseGaliciaDebitoPdf(content).map((row) => ({ ...row, sourceFile })));
+          } else {
+            const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+            parsedExpenses.push(...parseGaliciaDebitoWorkbook(wb).map((row) => ({ ...row, sourceFile })));
+          }
           continue;
         }
       }
@@ -1090,13 +1082,7 @@ function App() {
         setAnalysisMessage("No se detectaron transacciones para los archivos seleccionados. Revisemos el parser de ese formato.");
       } else {
         const records = expenses.map((e) => buildStoredExpense(e, e.sourceFile || "unknown"));
-        const added = [];
-        const skipped = [];
-        for (const rec of records) {
-          const result = await addExpenseIfNew(rec);
-          if (result.added) added.push(result.record);
-          else skipped.push(rec);
-        }
+        const { added, skipped } = await addManyIfNew(records);
         setAllExpenses((prev) => {
           const keys = new Set(prev.map((p) => p.dedupeKey));
           const next = [...prev];
@@ -1118,7 +1104,7 @@ function App() {
           );
         } else {
           setAnalysisMessage(
-            `Se cargaron ${gastosNuevos} gastos nuevos${ingresosNuevos ? ` y ${ingresosNuevos} ingresos` : ""} (${added.length} movimientos en total). Quedan guardados en este navegador (IndexedDB).`
+            `Se cargaron ${gastosNuevos} gastos nuevos${ingresosNuevos ? ` y ${ingresosNuevos} ingresos` : ""} (${added.length} movimientos en total). Quedan guardados en tu cuenta.`
           );
         }
       }
@@ -1203,7 +1189,7 @@ function App() {
   async function clearStoredExpenses() {
     if (
       !confirm(
-        "¿Borrar todos los gastos guardados en este navegador? Los datos en IndexedDB se eliminan y no se puede deshacer."
+        "¿Borrar todos los gastos guardados en tu cuenta? Se eliminan de Supabase y no se puede deshacer."
       )
     ) {
       return;
@@ -1225,7 +1211,7 @@ function App() {
   }
 
   const visibleColumnCount = COLUMN_DEFS.filter((col) => visibleColumns[col.id]).length || 1;
-  const tableColSpan = visibleColumnCount + 1;
+  const tableColSpan = visibleColumnCount + 2;
   function toggleColumn(columnId) {
     setVisibleColumns((prev) => {
       const enabled = Object.values(prev).filter(Boolean).length;
@@ -1406,6 +1392,62 @@ function App() {
     });
   }
 
+  function persistExpensePatch(ids, patchFn) {
+    const idSet = new Set((ids || []).filter(Boolean));
+    if (!idSet.size) return;
+    setAllExpenses((prev) => {
+      const next = prev.map((row) => (row.id && idSet.has(row.id) ? patchFn(row) : row));
+      const ts = Date.now();
+      const toSave = next.filter((row, i) => row.id && idSet.has(row.id) && row !== prev[i]).map((row) => ({ ...row, savedAt: ts }));
+      if (toSave.length > 0) {
+        void Promise.all(toSave.map((e) => putExpense(e))).catch(() => {});
+      }
+      return next.map((row) => (row.id && idSet.has(row.id) ? { ...row, savedAt: ts } : row));
+    });
+  }
+
+  function setExpensesShared(ids, shared) {
+    persistExpensePatch(ids, (e) => ({
+      ...e,
+      sharedWithSanti: Boolean(shared),
+      paidBy: e.paidBy === PAID_BY_SANTI ? PAID_BY_SANTI : PAID_BY_ME
+    }));
+  }
+
+  function toggleExpenseShared(expense) {
+    if (!expense?.id) return;
+    setExpensesShared([expense.id], !expense.sharedWithSanti);
+  }
+
+  function setExpensePaidBy(id, paidBy) {
+    const nextPaid = paidBy === PAID_BY_SANTI ? PAID_BY_SANTI : PAID_BY_ME;
+    persistExpensePatch([id], (e) => ({ ...e, paidBy: nextPaid, sharedWithSanti: true }));
+  }
+
+  async function addSantiManualExpense({ date, description, amount, category }) {
+    const cat = normalizeCategory(String(category || "").trim() || "Otros");
+    setCategoryOptions((prev) => (prev.includes(cat) ? prev : sortCategoriesList([...prev, cat])));
+    setCategoryColors((prev) => (prev[cat] !== undefined ? prev : { ...prev, [cat]: categoryFallbackColorIndex(cat) }));
+    const rec = buildStoredExpense(
+      {
+        date,
+        description,
+        amount,
+        category: cat,
+        bank: "Santi",
+        card_brand: "Cuenta",
+        card_type: "Manual",
+        raw_id: `santi-${Date.now()}`,
+        sharedWithSanti: true,
+        paidBy: PAID_BY_SANTI,
+        is_unknown: false
+      },
+      "manual-santi"
+    );
+    await putExpense(rec);
+    setAllExpenses((prev) => [rec, ...prev]);
+  }
+
   function toggleTableSort(key) {
     setTableSort((prev) => {
       if (prev.key === key) return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
@@ -1447,10 +1489,37 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Mis gastos del mes</h1>
-        <p>Resúmenes Patagonia, Galicia y Mercado Pago · Todo se procesa en tu navegador</p>
+        <div className="app-header-row">
+          <div>
+            <h1>Mis gastos del mes</h1>
+            <p>Resúmenes Patagonia, Galicia y Mercado Pago · Guardados en la nube</p>
+          </div>
+          {sessionUser && (
+            <div className="app-header-user">
+              <span className="app-header-email">{sessionUser.email}</span>
+              <button
+                type="button"
+                className="btn-ghost btn-inline"
+                onClick={() => {
+                  void supabase?.auth.signOut();
+                }}
+              >
+                Cerrar sesión
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
+      {sessionUser === undefined || (sessionUser && !cloudReady) ? (
+        <div className="loading-block panel">
+          <div className="loading-spinner" aria-hidden="true" />
+          <div className="loading-text">{sessionUser ? "Cargando tus gastos..." : "Entrando..."}</div>
+        </div>
+      ) : !sessionUser ? (
+        <AuthView />
+      ) : (
+        <>
       <nav className="app-tabs" role="tablist" aria-label="Secciones">
         <button
           type="button"
@@ -1479,6 +1548,15 @@ function App() {
         >
           Gráficos
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "shared"}
+          className={`app-tab${activeTab === "shared" ? " app-tab-active" : ""}`}
+          onClick={() => setActiveTab("shared")}
+        >
+          Con Santi
+        </button>
       </nav>
 
       {!loading && activeTab === "import" && (
@@ -1505,11 +1583,11 @@ function App() {
         </div>
       )}
 
-      {!loading && activeTab === "table" && allExpenses.length === 0 && (
+      {!loading && activeTab === "table" && personalExpenses.length === 0 && (
         <TableEmptyHint onGoImport={() => setActiveTab("import")} />
       )}
 
-      {!loading && activeTab === "table" && allExpenses.length > 0 && (
+      {!loading && activeTab === "table" && personalExpenses.length > 0 && (
         <TableView
           stats={stats}
           filters={filters}
@@ -1559,14 +1637,15 @@ function App() {
           formatDateCellWithWeekday={formatDateCellWithWeekday}
           displayExpenseMedium={displayExpenseMedium}
           exportFile={exportFile}
+          toggleExpenseShared={toggleExpenseShared}
         />
       )}
 
-      {!loading && activeTab === "charts" && allExpenses.length === 0 && (
+      {!loading && activeTab === "charts" && personalExpenses.length === 0 && (
         <ChartsEmptyHint onGoImport={() => setActiveTab("import")} />
       )}
 
-      {!loading && activeTab === "charts" && allExpenses.length > 0 && (
+      {!loading && activeTab === "charts" && personalExpenses.length > 0 && (
         <ChartsView
           chartMonth={chartMonth}
           setChartMonth={setChartMonth}
@@ -1578,7 +1657,31 @@ function App() {
         />
       )}
 
-      {activeTab === "table" && allExpenses.length > 0 && selectionSummary.count > 0 && (
+      {!loading && activeTab === "shared" && (
+        <SharedView
+          expenses={sharedExpenses}
+          monthOptions={sharedMonthOptions}
+          sharedMonth={sharedMonth}
+          setSharedMonth={setSharedMonth}
+          categories={categories}
+          formatDateCellWithWeekday={formatDateCellWithWeekday}
+          onAddSantiExpense={addSantiManualExpense}
+          onSetPaidBy={setExpensePaidBy}
+          onUnshare={(id) => setExpensesShared([id], false)}
+          onDelete={(id) => {
+            if (!id) return;
+            if (!confirm("¿Borrar este gasto de Santi?")) return;
+            void deleteExpensesByIds([id])
+              .then(() => {
+                setAllExpenses((prev) => prev.filter((e) => e.id !== id));
+                setSelectedExpenseIds((prev) => prev.filter((x) => x !== id));
+              })
+              .catch((err) => alert(`No se pudo eliminar: ${err.message}`));
+          }}
+        />
+      )}
+
+      {activeTab === "table" && personalExpenses.length > 0 && selectionSummary.count > 0 && (
         <div className="selection-dock" role="status" aria-live="polite">
           <div className="selection-dock-stats">
             <strong>{selectionSummary.count}</strong> seleccionados · Suma neta:{" "}
@@ -1596,9 +1699,25 @@ function App() {
               </span>
             )}
           </div>
-          <button type="button" className="btn-ghost btn-danger btn-inline" onClick={() => void deleteSelectedExpenses()}>
-            Eliminar seleccionados
-          </button>
+          <div className="selection-dock-actions">
+            <button
+              type="button"
+              className="btn-ghost btn-inline"
+              onClick={() => setExpensesShared(selectionSummary.list.map((e) => e.id), true)}
+            >
+              Compartir con Santi
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-inline"
+              onClick={() => setExpensesShared(selectionSummary.list.map((e) => e.id), false)}
+            >
+              Dejar de compartir
+            </button>
+            <button type="button" className="btn-ghost btn-danger btn-inline" onClick={() => void deleteSelectedExpenses()}>
+              Eliminar seleccionados
+            </button>
+          </div>
         </div>
       )}
 
@@ -1621,6 +1740,8 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
