@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Group, Loader, Modal, Select, Tabs, Text, TextInput } from "@mantine/core";
 import * as XLSX from "xlsx";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -46,6 +47,7 @@ import {
 } from "./utils/categoryVisual";
 import { buildPieSlices } from "./utils/chartPie";
 import { attachImportedSource, summarizeImportedSources } from "./utils/importedSources";
+import { suggestRuleKeyword } from "./utils/suggestKeyword";
 import {
   inferCardBrand,
   parseCreditPdfGeneric,
@@ -469,8 +471,8 @@ function App() {
     }
     return "subcategories";
   });
-  const [showColumnConfig, setShowColumnConfig] = useState(false);
   const [showRulesConfig, setShowRulesConfig] = useState(false);
+  const [rulePrompt, setRulePrompt] = useState(null);
   const [visibleColumns, setVisibleColumns] = useState(loadVisibleColumns());
   const [autoCategoryRules, setAutoCategoryRules] = useState(loadAutoCategoryRules());
   const [rulesDraft, setRulesDraft] = useState(() => cloneRules(loadAutoCategoryRules()));
@@ -1195,8 +1197,10 @@ function App() {
     }));
   }
 
-  function commitRulesDraft() {
-    const next = cloneRules(rulesDraft);
+  function commitRulesDraft(override) {
+    const source =
+      override && typeof override === "object" && Array.isArray(override.keywordRules) ? override : rulesDraft;
+    const next = cloneRules(source);
     setAutoCategoryRules(next);
     saveAutoCategoryRules(next);
     setAllExpenses((prev) => {
@@ -1353,6 +1357,34 @@ function App() {
     });
   }
 
+  function handleExpenseCategoryChange(expense, newCategoryRaw) {
+    const cat = normalizeCategory(String(newCategoryRaw || "").trim() || "Otros");
+    const prev = normalizeCategory(String(expense.category || "").trim() || "Otros");
+    if (cat === prev) return;
+    updateExpenseCategory(expense, cat);
+    setRulePrompt({
+      category: cat,
+      keyword: suggestRuleKeyword(expense.description)
+    });
+  }
+
+  function confirmRuleFromPrompt() {
+    if (!rulePrompt) return;
+    const keyword = String(rulePrompt.keyword || "").trim();
+    const category = rulePrompt.category;
+    setRulePrompt(null);
+    if (!keyword) return;
+    const next = cloneRules(autoCategoryRules);
+    const exists = next.keywordRules.some(
+      (r) => normalizeText(r.keyword) === normalizeText(keyword) && r.category === category
+    );
+    if (!exists) {
+      next.keywordRules = [...next.keywordRules, { keyword, category }];
+    }
+    setRulesDraft(next);
+    commitRulesDraft(next);
+  }
+
   function persistExpensePatch(ids, patchFn) {
     const idSet = new Set((ids || []).filter(Boolean));
     if (!idSet.size) return;
@@ -1458,15 +1490,15 @@ function App() {
           {sessionUser && (
             <div className="app-header-user">
               <span className="app-header-email">{sessionUser.email}</span>
-              <button
-                type="button"
-                className="btn-ghost btn-inline"
+              <Button
+                variant="default"
+                size="xs"
                 onClick={() => {
                   void supabase?.auth.signOut();
                 }}
               >
                 Cerrar sesión
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -1474,51 +1506,28 @@ function App() {
 
       {sessionUser === undefined || (sessionUser && !cloudReady) ? (
         <div className="loading-block panel">
-          <div className="loading-spinner" aria-hidden="true" />
+          <Loader color="sage" />
           <div className="loading-text">{sessionUser ? "Cargando tus gastos..." : "Entrando..."}</div>
         </div>
       ) : !sessionUser ? (
         <AuthView />
       ) : (
         <>
-      <nav className="app-tabs" role="tablist" aria-label="Secciones">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "table"}
-          className={`app-tab${activeTab === "table" ? " app-tab-active" : ""}`}
-          onClick={() => setActiveTab("table")}
-        >
-          Tabla
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "import"}
-          className={`app-tab${activeTab === "import" ? " app-tab-active" : ""}`}
-          onClick={() => setActiveTab("import")}
-        >
-          Importar
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "charts"}
-          className={`app-tab${activeTab === "charts" ? " app-tab-active" : ""}`}
-          onClick={() => setActiveTab("charts")}
-        >
-          Gráficos
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "shared"}
-          className={`app-tab${activeTab === "shared" ? " app-tab-active" : ""}`}
-          onClick={() => setActiveTab("shared")}
-        >
-          Con Santi
-        </button>
-      </nav>
+      <Tabs
+        className="gastos-tabs"
+        value={activeTab}
+        onChange={(v) => {
+          if (v) setActiveTab(v);
+        }}
+        mb="md"
+      >
+        <Tabs.List>
+          <Tabs.Tab value="table">Movimientos</Tabs.Tab>
+          <Tabs.Tab value="charts">Gráficos</Tabs.Tab>
+          <Tabs.Tab value="shared">Con Santi</Tabs.Tab>
+          <Tabs.Tab value="import">Importar</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
 
       {!loading && activeTab === "import" && (
         <ImportView
@@ -1541,7 +1550,7 @@ function App() {
 
       {loading && (
         <div className="loading-block panel">
-          <div className="loading-spinner" aria-hidden="true" />
+          <Loader color="sage" />
           <div className="loading-text">{loadingText}</div>
         </div>
       )}
@@ -1561,8 +1570,6 @@ function App() {
           categories={categories}
           rootCategories={rootCategories}
           categoryOptions={categoryOptions}
-          showColumnConfig={showColumnConfig}
-          setShowColumnConfig={setShowColumnConfig}
           visibleColumns={visibleColumns}
           toggleColumn={toggleColumn}
           showRulesConfig={showRulesConfig}
@@ -1596,7 +1603,7 @@ function App() {
           toggleSelectAllVisible={toggleSelectAllVisible}
           allVisibleSelected={allVisibleSelected}
           visibleRowsWithId={visibleRowsWithId}
-          updateExpenseCategory={updateExpenseCategory}
+          onCategoryChange={handleExpenseCategoryChange}
           formatDateCellWithWeekday={formatDateCellWithWeekday}
           displayExpenseMedium={displayExpenseMedium}
           exportFile={exportFile}
@@ -1627,6 +1634,7 @@ function App() {
           sharedMonth={sharedMonth}
           setSharedMonth={setSharedMonth}
           categories={categories}
+          categoryColors={categoryColors}
           formatDateCellWithWeekday={formatDateCellWithWeekday}
           onAddSantiExpense={addSantiManualExpense}
           onSetPaidBy={setExpensePaidBy}
@@ -1662,48 +1670,78 @@ function App() {
               </span>
             )}
           </div>
-          <div className="selection-dock-actions">
-            <button
-              type="button"
-              className="btn-ghost btn-inline"
+          <Group gap="xs" className="selection-dock-actions">
+            <Button
+              variant="default"
+              size="xs"
               onClick={() => setExpensesShared(selectionSummary.list.map((e) => e.id), true)}
             >
               Compartir con Santi
-            </button>
-            <button
-              type="button"
-              className="btn-ghost btn-inline"
+            </Button>
+            <Button
+              variant="default"
+              size="xs"
               onClick={() => setExpensesShared(selectionSummary.list.map((e) => e.id), false)}
             >
               Dejar de compartir
-            </button>
-            <button type="button" className="btn-ghost btn-danger btn-inline" onClick={() => void deleteSelectedExpenses()}>
+            </Button>
+            <Button color="red" variant="light" size="xs" onClick={() => void deleteSelectedExpenses()}>
               Eliminar seleccionados
-            </button>
-          </div>
+            </Button>
+          </Group>
         </div>
       )}
 
-      {modalOpen && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3>Contacto no identificado</h3>
-            <p>{currentUnknown}</p>
-            <input value={modalName} onChange={(e) => setModalName(e.target.value)} placeholder="Nombre" />
-            <select value={modalCat} onChange={(e) => setModalCat(e.target.value)}>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-            <div className="modal-actions">
-              <button onClick={() => updateUnknown(false)}>Omitir</button>
-              <button onClick={() => updateUnknown(true)}>Guardar</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal opened={modalOpen} onClose={() => updateUnknown(false)} title="Contacto no identificado">
+        <Text size="sm" c="dimmed" mb="md">
+          {currentUnknown}
+        </Text>
+        <TextInput
+          label="Nombre"
+          value={modalName}
+          onChange={(e) => setModalName(e.currentTarget.value)}
+          placeholder="Nombre"
+          mb="sm"
+        />
+        <Select
+          label="Categoría"
+          data={categories.map((cat) => ({ value: cat, label: cat }))}
+          value={modalCat}
+          onChange={(v) => {
+            if (v) setModalCat(v);
+          }}
+          searchable
+          mb="md"
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => updateUnknown(false)}>
+            Omitir
+          </Button>
+          <Button onClick={() => updateUnknown(true)}>Guardar</Button>
+        </Group>
+      </Modal>
+
+      <Modal
+        opened={Boolean(rulePrompt)}
+        onClose={() => setRulePrompt(null)}
+        title="¿Usar esto como regla general?"
+      >
+        <Text size="sm" c="dimmed" mb="md">
+          Los próximos movimientos cuya descripción incluya este texto se van a categorizar como{" "}
+          <strong>{rulePrompt?.category}</strong>.
+        </Text>
+        <TextInput
+          label="Palabra o frase"
+          value={rulePrompt?.keyword || ""}
+          onChange={(e) => setRulePrompt((p) => (p ? { ...p, keyword: e.currentTarget.value } : p))}
+        />
+        <Group justify="flex-end" mt="md">
+          <Button variant="default" onClick={() => setRulePrompt(null)}>
+            Solo este movimiento
+          </Button>
+          <Button onClick={confirmRuleFromPrompt}>Crear regla</Button>
+        </Group>
+      </Modal>
         </>
       )}
     </div>

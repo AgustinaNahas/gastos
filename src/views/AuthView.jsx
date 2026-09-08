@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Alert, Button, PasswordInput, Text, TextInput, Title } from "@mantine/core";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 export default function AuthView() {
@@ -11,15 +12,17 @@ export default function AuthView() {
   if (!isSupabaseConfigured()) {
     return (
       <section className="panel auth-panel">
-        <h2 className="panel-title">Falta configurar Supabase</h2>
-        <p className="auth-lead">
+        <Title order={2} className="panel-title">
+          Falta configurar Supabase
+        </Title>
+        <Text c="dimmed" mb="sm">
           Los gastos ahora se guardan en la nube. Seguí el <strong>README</strong> para crear el proyecto, correr el SQL y
           pegar las claves en <code>.env</code>.
-        </p>
-        <p className="auth-lead">
+        </Text>
+        <Text c="dimmed">
           Variables: <code>VITE_SUPABASE_URL</code> y <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> (o{" "}
           <code>VITE_SUPABASE_ANON_KEY</code>).
-        </p>
+        </Text>
       </section>
     );
   }
@@ -48,45 +51,49 @@ export default function AuthView() {
 
   return (
     <section className="panel auth-panel">
-      <h2 className="panel-title">{mode === "login" ? "Entrar" : "Crear cuenta"}</h2>
-      <p className="auth-lead">Tus resúmenes y reglas quedan en Supabase, no en este navegador.</p>
+      <Title order={2} className="panel-title">
+        {mode === "login" ? "Entrar" : "Crear cuenta"}
+      </Title>
+      <Text c="dimmed" mb="md">
+        Tus resúmenes y reglas quedan en Supabase, no en este navegador.
+      </Text>
       <form className="auth-form" onSubmit={submit}>
-        <label className="filter-group">
-          <span>Email</span>
-          <input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
-        <label className="filter-group">
-          <span>Contraseña</span>
-          <input
-            type="password"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={6}
-            required
-          />
-        </label>
-        <button type="submit" className="btn-primary" disabled={busy}>
+        <TextInput
+          label="Email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.currentTarget.value)}
+          required
+        />
+        <PasswordInput
+          label="Contraseña"
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+          minLength={6}
+          required
+        />
+        <Button type="submit" fullWidth disabled={busy}>
           {busy ? "Esperá…" : mode === "login" ? "Iniciar sesión" : "Registrarme"}
-        </button>
+        </Button>
       </form>
-      <button
-        type="button"
-        className="btn-ghost"
+      <Button
+        variant="default"
+        fullWidth
+        mt="sm"
         onClick={() => {
           setMode((m) => (m === "login" ? "signup" : "login"));
           setMessage("");
         }}
       >
         {mode === "login" ? "No tengo cuenta" : "Ya tengo cuenta"}
-      </button>
-      {message && <div className="alert-inline">{message}</div>}
+      </Button>
+      {message && (
+        <Alert mt="md" color="sage">
+          {message}
+        </Alert>
+      )}
     </section>
   );
 }

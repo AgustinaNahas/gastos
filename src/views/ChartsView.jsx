@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button, Select, Title } from "@mantine/core";
+import { IconCalendar, IconChartPie } from "@tabler/icons-react";
 import { resolveCategoryVisual } from "../utils/categoryVisual";
 import { pieSlicePath } from "../utils/chartPie";
 
@@ -10,11 +12,11 @@ function formatBarMoney(n) {
 export function ChartsEmptyHint({ onGoImport }) {
   return (
     <section className="panel empty-tab-hint">
-      <h2 className="panel-title">Sin datos para gráficos</h2>
+      <Title order={2} className="panel-title">
+        Sin datos para gráficos
+      </Title>
       <p className="empty-tab-text">Cargá movimientos desde <strong>Importar</strong> para ver tortas y rankings por mes.</p>
-      <button type="button" className="btn-primary" onClick={onGoImport}>
-        Ir a importar
-      </button>
+      <Button onClick={onGoImport}>Ir a importar</Button>
     </section>
   );
 }
@@ -107,7 +109,9 @@ export default function ChartsView({
   return (
     <section className="panel charts-section">
       <div className="charts-section-header">
-        <h2 className="panel-title">Gráficos del mes</h2>
+        <Title order={2} className="panel-title">
+          Gráficos del mes
+        </Title>
         <div className="chart-info-wrap" ref={infoWrapRef}>
           <button
             type="button"
@@ -133,34 +137,34 @@ export default function ChartsView({
         </div>
       </div>
       <div className="chart-toolbar">
-        <label htmlFor="chart-month" className="chart-month-label">
-          Mes
-        </label>
-        <select
-          id="chart-month"
-          className="chart-month-select"
-          value={chartMonth}
-          onChange={(e) => setChartMonth(e.target.value)}
-        >
-          {monthOptions.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="chart-pie-granularity" className="chart-month-label">
-          Torta por
-        </label>
-        <select
-          id="chart-pie-granularity"
-          className="chart-month-select"
+        <Select
+          label="Mes"
+          leftSection={<IconCalendar size={16} />}
+          data={monthOptions.map((m) => ({ value: m.value, label: m.label }))}
+          value={chartMonth || null}
+          onChange={(v) => {
+            if (v) setChartMonth(v);
+          }}
+          searchable
+          allowDeselect={false}
+          w={220}
+        />
+        <Select
+          label="Torta por"
+          leftSection={<IconChartPie size={16} />}
+          data={[
+            { value: "subcategories", label: "Subcategorías" },
+            { value: "categories", label: "Categorías" }
+          ]}
           value={chartPieGranularity}
-          onChange={(e) => setChartPieGranularity(e.target.value)}
+          onChange={(v) => {
+            if (v) setChartPieGranularity(v);
+          }}
+          allowDeselect={false}
+          searchable={false}
           aria-label="Agrupación de la torta de categorías"
-        >
-          <option value="subcategories">Subcategorías</option>
-          <option value="categories">Categorías</option>
-        </select>
+          w={200}
+        />
       </div>
       {chartMonth && (
         <>

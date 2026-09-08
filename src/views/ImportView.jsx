@@ -1,4 +1,6 @@
 import React from "react";
+import { ActionIcon, Alert, Badge, Button, Group, Text, Title } from "@mantine/core";
+import { IconX } from "@tabler/icons-react";
 
 export default function ImportView({
   fileInputRef,
@@ -18,7 +20,9 @@ export default function ImportView({
 }) {
   return (
     <section className="panel">
-      <h2 className="panel-title">Importar archivos</h2>
+      <Title order={2} className="panel-title">
+        Importar archivos
+      </Title>
       <div
         className={`upload-zone${uploadDragging ? " drag-over" : ""}`}
         onClick={() => fileInputRef.current?.click()}
@@ -61,37 +65,40 @@ export default function ImportView({
             <span className="fname" title={f.name}>
               {f.name}
             </span>
-            <span className="chip">{fileTypeTag(f.name)}</span>
-            <button type="button" className="btn-icon" title="Quitar" onClick={() => removeFile(idx)}>
-              ✕
-            </button>
+            <Badge variant="light" color="sage">
+              {fileTypeTag(f.name)}
+            </Badge>
+            <ActionIcon variant="subtle" color="gray" title="Quitar" onClick={() => removeFile(idx)}>
+              <IconX size={16} />
+            </ActionIcon>
           </div>
         ))}
       </div>
-      <div className="actions-row">
-        <button type="button" className="btn-primary" disabled={uploadedFiles.length === 0} onClick={startAnalysis}>
+      <Group gap="sm" mt="md" wrap="wrap">
+        <Button disabled={uploadedFiles.length === 0} onClick={startAnalysis}>
           Analizar resúmenes
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          disabled={uploadedFiles.length === 0 && !analysisMessage}
-          onClick={clearImportQueue}
-        >
+        </Button>
+        <Button variant="default" disabled={uploadedFiles.length === 0 && !analysisMessage} onClick={clearImportQueue}>
           Limpiar cola
-        </button>
-        <button type="button" className="btn-ghost btn-danger" disabled={!hasStoredExpenses} onClick={clearStoredExpenses}>
+        </Button>
+        <Button color="red" variant="light" disabled={!hasStoredExpenses} onClick={clearStoredExpenses}>
           Borrar historial
-        </button>
-      </div>
-      {analysisMessage && <div className="alert-inline">{analysisMessage}</div>}
+        </Button>
+      </Group>
+      {analysisMessage && (
+        <Alert mt="md" color="sage">
+          {analysisMessage}
+        </Alert>
+      )}
 
       {importedSources.length > 0 && (
         <div className="imported-sources">
-          <h3 className="imported-sources-title">Ya guardados</h3>
-          <p className="imported-sources-lead">
+          <Title order={3} className="imported-sources-title">
+            Ya guardados
+          </Title>
+          <Text size="sm" c="dimmed" mb="sm">
             Si un resumen quedó mal (por ejemplo Mercado Pago), borralo acá y volvé a subirlo. No hace falta vaciar todo.
-          </p>
+          </Text>
           <ul className="imported-sources-list">
             {importedSources.map((src) => (
               <li key={src.sourceFile} className="imported-source-item">
@@ -105,13 +112,9 @@ export default function ImportView({
                     {src.ingresos ? ` · ${src.ingresos} ingresos` : ""}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn-ghost btn-danger btn-inline"
-                  onClick={() => onDeleteSource?.(src.sourceFile)}
-                >
+                <Button color="red" variant="light" size="xs" onClick={() => onDeleteSource?.(src.sourceFile)}>
                   Quitar
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

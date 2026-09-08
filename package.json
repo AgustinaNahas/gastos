@@ -9,7 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mantine/core": "^7.17.8",
+    "@mantine/hooks": "^7.17.8",
     "@supabase/supabase-js": "^2.115.0",
+    "@tabler/icons-react": "^3.46.0",
     "idb": "^8.0.3",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",

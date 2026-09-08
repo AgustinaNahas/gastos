@@ -1,5 +1,9 @@
 import React, { useMemo, useState } from "react";
+import { Alert, Button, Select, TextInput, Title } from "@mantine/core";
+import { IconCalendar, IconTag } from "@tabler/icons-react";
 import { parseMoney } from "../parsers/statements";
+import CategorySelect from "../components/CategorySelect";
+import FilterSelect from "../components/FilterSelect";
 import {
   PAID_BY_ME,
   PAID_BY_SANTI,
@@ -27,7 +31,8 @@ export default function SharedView({
   onAddSantiExpense,
   onSetPaidBy,
   onUnshare,
-  onDelete
+  onDelete,
+  categoryColors
 }) {
   const [date, setDate] = useState(todayInputDate);
   const [description, setDescription] = useState("");
@@ -102,7 +107,9 @@ export default function SharedView({
 
   return (
     <section className="results-section panel">
-      <h2 className="panel-title">Compartido con Santi</h2>
+      <Title order={2} className="panel-title">
+        Compartido con Santi
+      </Title>
       <p className="shared-lead">
         A mitades. En la tabla marcá lo que pagaste vos; acá cargá lo que pagó él. El saldo dice quién queda debiendo.
       </p>
@@ -132,71 +139,78 @@ export default function SharedView({
       )}
 
       <div className="filters-toolbar">
-        <div className="filter-group">
-          <label htmlFor="shared-month">Mes</label>
-          <select id="shared-month" value={sharedMonth} onChange={(e) => setSharedMonth(e.target.value)}>
-            <option value="">Todos los meses</option>
-            {monthOptions.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <FilterSelect
+          label="Mes"
+          icon={<IconCalendar size={16} />}
+          value={sharedMonth}
+          onChange={setSharedMonth}
+          data={monthOptions.map((m) => ({ value: m.value, label: m.label }))}
+          placeholder="Todos los meses"
+        />
       </div>
 
       <form className="shared-add-form" onSubmit={submitManual}>
-        <h3 className="shared-add-title">Agregar gasto de Santi</h3>
+        <Title order={4} className="shared-add-title">
+          Agregar gasto de Santi
+        </Title>
         <div className="shared-add-grid">
-          <div className="filter-group">
-            <label htmlFor="santi-date">Fecha</label>
-            <input id="santi-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          </div>
-          <div className="filter-group shared-add-desc">
-            <label htmlFor="santi-desc">Descripción</label>
-            <input
-              id="santi-desc"
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ej. Super, Uber, alquiler"
-            />
-          </div>
-          <div className="filter-group">
-            <label htmlFor="santi-amount">Monto</label>
-            <input
-              id="santi-amount"
-              type="text"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="12.500,00"
-            />
-          </div>
-          <div className="filter-group">
-            <label htmlFor="santi-flow">Flujo</label>
-            <select id="santi-flow" value={flow} onChange={(e) => setFlow(e.target.value)}>
-              <option value="out">Gasto (salida)</option>
-              <option value="in">Ingreso (entrada)</option>
-            </select>
-          </div>
-          <div className="filter-group">
-            <label htmlFor="santi-cat">Categoría</label>
-            <select id="santi-cat" value={category} onChange={(e) => setCategory(e.target.value)}>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
+          <TextInput
+            id="santi-date"
+            label="Fecha"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.currentTarget.value)}
+            required
+          />
+          <TextInput
+            className="shared-add-desc"
+            id="santi-desc"
+            label="Descripción"
+            value={description}
+            onChange={(e) => setDescription(e.currentTarget.value)}
+            placeholder="Ej. Super, Uber, alquiler"
+          />
+          <TextInput
+            id="santi-amount"
+            label="Monto"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.currentTarget.value)}
+            placeholder="12.500,00"
+          />
+          <Select
+            label="Flujo"
+            data={[
+              { value: "out", label: "Gasto (salida)" },
+              { value: "in", label: "Ingreso (entrada)" }
+            ]}
+            value={flow}
+            onChange={(v) => {
+              if (v) setFlow(v);
+            }}
+            allowDeselect={false}
+            searchable={false}
+          />
+          <CategorySelect
+            label="Categoría"
+            value={category}
+            categories={categories}
+            categoryColors={categoryColors}
+            onChange={(v) => {
+              if (v) setCategory(v);
+            }}
+            size="sm"
+            leftSection={<IconTag size={16} />}
+          />
           <div className="shared-add-submit">
-            <button type="submit" className="btn-primary">
-              Guardar
-            </button>
+            <Button type="submit">Guardar</Button>
           </div>
         </div>
-        {formError && <div className="alert-inline">{formError}</div>}
+        {formError && (
+          <Alert mt="sm" color="red">
+            {formError}
+          </Alert>
+        )}
       </form>
 
       <div className="table-wrap">
@@ -230,16 +244,22 @@ export default function SharedView({
                     <td>{e.description || "—"}</td>
                     <td>{e.category || "Otros"}</td>
                     <td>
-                      <select
-                        className="shared-payer-select"
+                      <Select
+                        size="xs"
+                        data={[
+                          { value: PAID_BY_ME, label: "Vos" },
+                          { value: PAID_BY_SANTI, label: "Santi" }
+                        ]}
                         value={paidByOf(e)}
-                        onChange={(ev) => onSetPaidBy(e.id, ev.target.value)}
+                        onChange={(v) => {
+                          if (v) onSetPaidBy(e.id, v);
+                        }}
                         disabled={!e.id}
+                        allowDeselect={false}
+                        searchable={false}
                         aria-label={`Quién pagó ${e.description || ""}`}
-                      >
-                        <option value={PAID_BY_ME}>Vos</option>
-                        <option value={PAID_BY_SANTI}>Santi</option>
-                      </select>
+                        w={110}
+                      />
                     </td>
                     <td className={moneyClass(e.amount)} style={{ textAlign: "right" }}>
                       {formatMoneyAr(e.amount)}
@@ -249,18 +269,13 @@ export default function SharedView({
                     </td>
                     <td className="shared-row-actions">
                       {manual ? (
-                        <button
-                          type="button"
-                          className="btn-ghost btn-inline btn-danger"
-                          onClick={() => onDelete(e.id)}
-                          disabled={!e.id}
-                        >
+                        <Button color="red" variant="light" size="xs" onClick={() => onDelete(e.id)} disabled={!e.id}>
                           Borrar
-                        </button>
+                        </Button>
                       ) : (
-                        <button type="button" className="btn-ghost btn-inline" onClick={() => onUnshare(e.id)} disabled={!e.id}>
+                        <Button variant="default" size="xs" onClick={() => onUnshare(e.id)} disabled={!e.id}>
                           Sacar
-                        </button>
+                        </Button>
                       )}
                     </td>
                   </tr>
