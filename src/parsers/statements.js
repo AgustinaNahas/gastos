@@ -85,6 +85,17 @@ function isGaliciaDebitoNoise(line) {
   return false;
 }
 
+/** Fin del listado de movimientos: totales y pie legal del resumen. */
+function isGaliciaDebitoEndOfMovements(line) {
+  const l = String(line || "").toLowerCase().trim();
+  if (/^total\b/.test(l)) return true;
+  if (/^los dep[oó]sitos\b/.test(l)) return true;
+  if (/^los totales mensuales\b/.test(l)) return true;
+  if (/^al completa\b/.test(l)) return true;
+  if (/^canales de atenci/.test(l)) return true;
+  return false;
+}
+
 function toGaliciaDebitoExpense(entry) {
   const description = String(entry.description || "").replace(/\s+/g, " ").trim();
   return {
@@ -124,6 +135,10 @@ export function parseGaliciaDebitoPdf(text) {
   };
 
   for (const line of lines) {
+    if (isGaliciaDebitoEndOfMovements(line)) {
+      flush();
+      break;
+    }
     if (isGaliciaDebitoNoise(line)) continue;
     const dateMatch = line.match(GALICIA_DEBITO_DATE_RE);
     if (dateMatch) {

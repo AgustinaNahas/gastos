@@ -116,9 +116,11 @@ export function applyConfiguredCategory(expense, rules, availableCategories = DE
 export function categorize(description) {
   const d = (description || "").toLowerCase();
   if (/farmacia|farmacity|salud|medic|osde/.test(d)) return "Salud";
-  if (/super|supermercado|carrefour|coto|jumbo|\bdia\b|hipolito/.test(d)) return "Supermercado";
+  if (/\bsuper\b|supermercado|carrefour|coto|jumbo|\bdia\b|hipolito/.test(d)) return "Supermercado";
   if (/sube|transporte|bus|subte|emova|uber|cabify/.test(d)) return "Transporte";
-  if (/spotify|netflix|cine|entradas|google|steam|playstation|xbox|despegar/.test(d)) return "Hobbies";
+  if (/spotify|netflix|cine|entradas|tickets|enigma|google|steam|playstation|xbox|despegar/.test(d)) {
+    return "Hobbies";
+  }
   if (
     /lunch|resto|pedidosya|grido|cafe|food|pasteler|brocoli|vicente lopez|open 25|kiosco/.test(d)
   ) {
