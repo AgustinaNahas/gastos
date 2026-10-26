@@ -53,6 +53,7 @@ import {
   parseCreditPdfGeneric,
   parseGaliciaDebitoPdf,
   parseMercadoDebitoCsvNewExport,
+  parseMercadoDebitoPdf,
   parseMoney,
   parsePatagoniaDebito,
   textLooksLikeMercadoNewExport
@@ -949,7 +950,10 @@ function App() {
 
         if (type === "mercado-debito") {
           const ext = (f.name.split(".").pop() || "").toLowerCase();
-          if (ext === "csv") {
+          if (ext === "pdf") {
+            const content = await readFileContent(f);
+            parsedExpenses.push(...attachImportedSource(f.name, parseMercadoDebitoPdf(content)));
+          } else if (ext === "csv") {
             const text = await f.text();
             if (textLooksLikeMercadoNewExport(text)) {
               parsedExpenses.push(...attachImportedSource(f.name, parseMercadoDebitoCsvNewExport(text)));

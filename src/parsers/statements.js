@@ -333,6 +333,120 @@ export function interpretMercadoNewType(rawType) {
   return { description: t || "Movimiento", medium: "Cuenta", internal: false };
 }
 
+const MERCADO_PDF_DATE_RE = /^(\d{2}-\d{2}-\d{4})(?:\s+(.*))?$/;
+const MERCADO_PDF_MONEY_RE = /\$\s*(-?\d{1,3}(?:\.\d{3})*,\d{2})/g;
+const MERCADO_PDF_OP_ID_RE = /\b(\d{10,})\b/;
+const MERCADO_PDF_TYPE_START_RE =
+  /^(pago|transferencia|reserva|dinero|rendimientos|ingreso|compra)\b/i;
+
+function isMercadoDebitoPdfNoise(line) {
+  const l = String(line || "").toLowerCase();
+  if (/^resumen de (cuenta|tenencias)/.test(l)) return true;
+  if (/^detalle de movimientos/.test(l)) return true;
+  if (/^fecha\b/.test(l)) return true;
+  if (/^operaci[oó]n\b/.test(l)) return true;
+  if (/^id de la\b/.test(l)) return true;
+  if (/^\d+\/\d+$/.test(l)) return true;
+  if (/saldo inicial|entradas:|salidas:|saldo final/.test(l)) return true;
+  if (/periodo:|^cvu:|cuit\/?\s*cuil/.test(l)) return true;
+  if (/^fecha de generaci/.test(l)) return true;
+  if (/mercado libre s\.?r\.?l/.test(l)) return true;
+  if (/^de consulta en:/.test(l)) return true;
+  if (/^estas operaciones fueron realizadas/.test(l)) return true;
+  if (/^comitente:/.test(l)) return true;
+  return false;
+}
+
+function isMercadoDebitoPdfEnd(line) {
+  return /resumen de tenencias/i.test(String(line || ""));
+}
+
+function countMercadoPdfMoney(blob) {
+  const matches = String(blob || "").match(MERCADO_PDF_MONEY_RE);
+  return matches ? matches.length : 0;
+}
+
+function toMercadoDebitoExpense(releaseDate, rawType, refId, amount) {
+  const interpreted = interpretMercadoNewType(rawType);
+  return {
+    date: mercadoReleaseDateToDisplay(releaseDate),
+    description: interpreted.description,
+    raw_id: String(refId || ""),
+    category: categorizeMercadoNewExport(interpreted.description, rawType),
+    bank: "Mercado Pago",
+    card_brand: interpreted.medium,
+    card_type: "Débito",
+    card_last4: null,
+    amount,
+    monthKey: mercadoReleaseDateToMonthKey(releaseDate),
+    is_unknown: false,
+    isInternal: interpreted.internal
+  };
+}
+
+/**
+ * Resumen PDF de Mercado Pago (cuenta en pesos). Compatible con el texto que arma pdf.js.
+ */
+export function parseMercadoDebitoPdf(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const expenses = [];
+  const pendingDesc = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (isMercadoDebitoPdfEnd(line)) break;
+    if (isMercadoDebitoPdfNoise(line)) continue;
+
+    const dateMatch = line.match(MERCADO_PDF_DATE_RE);
+    if (!dateMatch) {
+      pendingDesc.push(line);
+      continue;
+    }
+
+    let blob = [pendingDesc.join(" "), dateMatch[2] || ""].filter(Boolean).join(" ").trim();
+    pendingDesc.length = 0;
+
+    let j = i + 1;
+    while (j < lines.length) {
+      const next = lines[j];
+      if (isMercadoDebitoPdfEnd(next) || isMercadoDebitoPdfNoise(next)) break;
+      if (MERCADO_PDF_DATE_RE.test(next)) break;
+      const moneysSoFar = countMercadoPdfMoney(blob);
+      const nextMoneys = countMercadoPdfMoney(next);
+      if (moneysSoFar >= 2) {
+        if (nextMoneys > 0 || MERCADO_PDF_TYPE_START_RE.test(next)) break;
+        blob = `${blob} ${next}`.trim();
+        j += 1;
+        break;
+      }
+      blob = `${blob} ${next}`.trim();
+      j += 1;
+    }
+    i = j - 1;
+
+    const moneyTokens = [...blob.matchAll(MERCADO_PDF_MONEY_RE)].map((m) => m[1]);
+    if (!moneyTokens.length) continue;
+    const amount = parseMercadoArgentineAmount(moneyTokens[0]);
+    const opMatch = blob.match(MERCADO_PDF_OP_ID_RE);
+    const refId = opMatch ? opMatch[1] : "";
+
+    let rawType = blob;
+    for (const token of moneyTokens) {
+      rawType = rawType.replace(`$${token}`, " ").replace(`$ ${token}`, " ");
+    }
+    if (refId) rawType = rawType.replace(refId, " ");
+    rawType = rawType.replace(/\$/g, " ").replace(/\s+/g, " ").trim();
+    if (!rawType && amount === 0) continue;
+
+    expenses.push(toMercadoDebitoExpense(dateMatch[1], rawType, refId, amount));
+  }
+
+  return expenses;
+}
+
 export function parseMercadoDebitoCsvNewExport(text) {
   const lines = String(text)
     .split(/\r?\n/)
@@ -354,21 +468,7 @@ export function parseMercadoDebitoCsvNewExport(text) {
     const refId = row.REFERENCE_ID || "";
     const amount = parseMercadoArgentineAmount(row.TRANSACTION_NET_AMOUNT);
     if (!releaseDate && !rawType && amount === 0) continue;
-    const interpreted = interpretMercadoNewType(rawType);
-    out.push({
-      date: mercadoReleaseDateToDisplay(releaseDate),
-      description: interpreted.description,
-      raw_id: String(refId),
-      category: categorizeMercadoNewExport(interpreted.description, rawType),
-      bank: "Mercado Pago",
-      card_brand: interpreted.medium,
-      card_type: "Débito",
-      card_last4: null,
-      amount,
-      monthKey: mercadoReleaseDateToMonthKey(releaseDate),
-      is_unknown: false,
-      isInternal: interpreted.internal
-    });
+    out.push(toMercadoDebitoExpense(releaseDate, rawType, refId, amount));
   }
   return out;
 }
